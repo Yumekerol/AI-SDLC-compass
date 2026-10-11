@@ -75,3 +75,44 @@ RNF17	Documentação	As limitações do PoC e o caminho para enterprise ficam do
     Privacidade: podemos enviar excertos de código ao GenAI, ou só sinais agregados? (RF26, RNF07)
     Interface: aplicação web, CLI ou outra?
     Agentes e chatbot: querem RF-A e RF-B, ou só formulário + scan + relatório?
+
+
+
+
+
+TO BE VERIFIED
+
+ID	    Requisito	                                                                                                                            UC	                Prioridade
+RF33	O sistema permite criar conta com email e palavra-passe	                                                                                UC01	            Must
+RF34	O sistema permite iniciar e terminar sessão, com expiração por inatividade	                                                            UC02, UC03	        Must
+RF35	O sistema distingue os perfis Utilizador e Avaliador e restringe as funções de avaliação ao Avaliador	                                UC01, UC18, UC19	Must
+RF36	O sistema guarda cada análise com sinais, inputs, versões do diagnóstico, conversa e PDFs	                                            UC10, UC11, UC13	Must
+RF37	O utilizador lista as suas análises, reabre-as e descarrega os PDFs gerados                                             	            UC14, UC15	        Must
+RF38	O utilizador compara duas versões do diagnóstico	                                                                                    UC15	            Could
+RF39	O utilizador elimina uma análise e todos os dados associados	                                                                        UC16	            Could
+RF40	O utilizador pode voltar a uma versão anterior do diagnóstico e continuar o refinamento a partir dela	                                UC11, UC15	        Could
+RF41	Cada mensagem do chat fica ligada à versão do diagnóstico a que diz respeito	                                                        UC11, UC15	        Should
+RF42	O utilizador escolhe que versão pré-visualiza e exporta (por omissão, a mais recente)	                                                UC12, UC13	        Should
+RF43	Quando uma fase não tem oportunidades relevantes, o diagnóstico indica “sem recomendação prioritária” com justificação	                UC10	            Must
+RF44	O sistema indica o nível de confiança dos sinais deduzidos (ex.: stack inferida por extensão, sem ficheiro de dependências)	            UC05	            Should
+RF45	A decisão tomada perante um repositório fora do âmbito (subconjunto, aviso, cancelar) fica registada na análise e aparece no relatório	UC05, UC13	        Must
+RF46	O sistema regista o consentimento de privacidade em cada análise antes de enviar dados ao GenAI	                                        UC09	            Must
+RF47	O utilizador pesquisa e ordena as análises do histórico	                                                                                UC14	            Could
+RF48	O sistema guarda automaticamente como rascunho o que está por concluir quando a sessão termina	                                        UC03, UC07	        Could
+RF49	O avaliador define quantas vezes repete cada combinação de repositório e perfil	                                                        UC18	            Should
+RF50	Se uma execução da avaliação falhar, o sistema regista o erro e continua com as restantes	                                            UC18	            Should
+RF51	O sistema guarda cada avaliação de qualidade ligada ao diagnóstico e aos seus metadados	                                                UC19	            Should
+RF52	O avaliador compara avaliações entre versões do prompt ou modelos	                                                                    UC19	            Could
+RF53	O utilizador recupera a palavra-passe	                                                                                                UC02	            Could (opcional pra PoC imo)
+
+4. Novos requisitos não funcionais
+ID	    Categoria	                Requisito	                                                                                                        UC	                Prioridade
+RNF18	Segurança e privacidade	    As palavras-passe são guardadas com hash e cada utilizador só acede aos seus dados	                                UC01 a UC03, UC14	Must
+RNF19	Segurança e privacidade	    O histórico guarda sinais e resultados, nunca o código original	                                                    UC05, UC15	        Must
+RNF20	Configuração	            A configuração do GenAI (fornecedor, modelo, parâmetros) é definida em ficheiro de configuração, fora do código	    UC10, UC18	        Must
+RNF21	Segurança e privacidade	    O login limita tentativas falhadas consecutivas	                                                                    UC02	            Should
+RNF22	Segurança e privacidade	    O sistema valida os ZIP e os URLs recebidos (tamanho máximo, extração segura, só fornecedores permitidos)	        UC04	            Should
+RNF23	Usabilidade	                O utilizador vê o progresso do scan e da geração do diagnóstico	                                                    UC05, UC10	        Should
+
+Nota: Eu nao sei ate que ponto estamos a implementar segurança mas só para o caso ja tao ai os RNF :D
+
