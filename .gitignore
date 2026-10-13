@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -11,9 +11,16 @@ ENV/
 
 # Data & SQLite
 backend/data/
+SDLC-Compass/backend/data/
 *.db
 *.sqlite3
 *.sqlite
+
+# Node & Frontend
+node_modules/
+dist/
+dist-ssr/
+*.tsbuildinfo
 
 # Testing & Coverage
 .pytest_cache/
