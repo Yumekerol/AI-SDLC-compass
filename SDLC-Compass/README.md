@@ -63,24 +63,34 @@ On first start the backend automatically creates:
 
 No manual database setup is required.
 
-### LLM provider
+### LLM provider — current prototype status
 
-The backend defaults to **Ollama** (`http://localhost:11434`, model `llama3.1`).
-Report synthesis will fail if Ollama is not running or the model is not pulled.
+> **The current prototype is fully rule-based.** All four specialist agents
+> (`RequirementsAgent`, `CodeAgent`, `QAAgent`, `DevOpsAgent`) and the
+> `SynthesizerAgent` produce their analysis and recommendations from scanner signals
+> using deterministic logic. **No LLM is called during a diagnostic session.**
+> The LLM provider instances are created at startup but are not yet invoked.
+>
+> This means **you can run the complete end-to-end flow (scan → diagnose → report)
+> without Ollama installed, without any API keys, and without any external services.**
 
-```powershell
-# Pull the default model once (requires Ollama installed):
-ollama pull llama3.1
-```
+The `LLM_PROVIDER` env var (default `ollama`) and the `MockLLMProvider` class exist
+as scaffolding for a future LLM-powered phase. When that phase is implemented:
 
-To switch provider, set environment variables before starting uvicorn (or add them
-to a `.env` file in `SDLC-Compass/`):
+- The prototype will call Ollama by default — set `LLM_PROVIDER=ollama` and run
+  `ollama pull llama3.1` beforehand.
+- To use a cloud provider instead, add the relevant env vars to
+  `SDLC-Compass/.env`:
 
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o
-```
+  ```env
+  LLM_PROVIDER=openai
+  OPENAI_API_KEY=sk-...
+  OPENAI_MODEL=gpt-4o
+  ```
+
+- There is no `LLM_PROVIDER=mock` enum value. `MockLLMProvider` is selected
+  automatically as a fallback when no valid provider + credentials combination is
+  found (e.g. `LLM_PROVIDER=openai` without `OPENAI_API_KEY` set).
 
 ---
 
