@@ -102,6 +102,16 @@ function handleBackToReport() {
         Engage with the specialist agents and the synthesizer. Challenge recommendations,
         inquire about implementation steps, or adjust priorities based on team realities.
       </p>
+      <div class="preview-notice-badge">
+        <svg class="preview-notice-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path
+            fill-rule="evenodd"
+            d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z"
+            clip-rule="evenodd"
+          />
+        </svg>
+        <span><strong>Preview:</strong> This conversational advisor is an interactive preview and is not yet connected to the backend.</span>
+      </div>
     </div>
 
     <!-- 2-Column Layout: Left Context & Priorities, Right Conversation -->
@@ -284,6 +294,26 @@ function handleBackToReport() {
   font-size: 1.0625rem;
   color: var(--color-text-secondary);
   max-width: 800px;
+}
+
+.preview-notice-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.5rem 0.875rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.preview-notice-icon {
+  width: 1rem;
+  height: 1rem;
+  color: var(--color-primary);
+  flex-shrink: 0;
 }
 
 /* 2-Column Workspace Grid */

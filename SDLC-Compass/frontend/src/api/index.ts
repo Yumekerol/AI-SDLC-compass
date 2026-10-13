@@ -14,13 +14,19 @@ import {
   mockAdvisorContext,
   mockInitialAdvisorMessages
 } from '@/mocks'
+import * as backendClient from './backendClient'
+import { adaptBackendSignalsToRepoSignals, adaptRepoSignalsToPatchRequest } from './adapters'
+
+export * from './types'
+export * from './adapters'
+export * as backendClient from './backendClient'
 
 /**
  * Mock toggle and backend base URL configuration.
  * Defaults to mocks (true) unless explicitly set to 'false' in VITE_USE_MOCKS.
  */
 export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== 'false'
-export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api/v1'
+export const API_BASE = backendClient.API_BASE
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -32,8 +38,35 @@ let currentAdvisorMessages: AdvisorMessage[] = JSON.parse(JSON.stringify(mockIni
 
 /**
  * Scan a repository (Git URL or ZIP file upload)
+ * Connects to FastAPI backend if USE_MOCKS is false.
  */
-export async function scanRepository(payload: ConnectPayload): Promise<RepoSignals> {
+export async function scanRepository(
+  payload: ConnectPayload,
+  onProgress?: (message: string) => void
+): Promise<RepoSignals> {
+  if (!USE_MOCKS) {
+    onProgress?.('Creating diagnostic session on backend...')
+    const sessionRes = await backendClient.createSession(payload)
+    const sessionId = sessionRes.session_id
+
+    if (payload.source === 'zip' && payload.file) {
+      onProgress?.('Uploading ZIP repository archive...')
+      await backendClient.uploadZipArchive(sessionId, payload.file)
+    }
+
+    onProgress?.('Starting Light Scanner...')
+    await backendClient.triggerScan(sessionId)
+
+    onProgress?.('Analyzing code structure and dependencies...')
+    await backendClient.pollSessionStatus(sessionId, onProgress)
+
+    onProgress?.('Retrieving extracted signals...')
+    const rawSignals = await backendClient.getSignals(sessionId)
+    currentSignals = adaptBackendSignalsToRepoSignals(rawSignals)
+    return currentSignals
+  }
+
+  // --- Mock Mode ---
   await delay(1200)
 
   // Simulation: out of scope if URL contains 'out-of-scope' or 'invalid'
@@ -70,7 +103,12 @@ export async function scanRepository(payload: ConnectPayload): Promise<RepoSigna
 /**
  * Get current repository signals
  */
-export async function getSignals(): Promise<RepoSignals> {
+export async function getSignals(sessionId?: string): Promise<RepoSignals> {
+  if (!USE_MOCKS && sessionId) {
+    const rawSignals = await backendClient.getSignals(sessionId)
+    currentSignals = adaptBackendSignalsToRepoSignals(rawSignals)
+    return currentSignals
+  }
   await delay(400)
   return currentSignals
 }
@@ -78,10 +116,31 @@ export async function getSignals(): Promise<RepoSignals> {
 /**
  * Update modified repository signals
  */
-export async function updateSignals(updated: RepoSignals): Promise<RepoSignals> {
+export async function updateSignals(updated: RepoSignals, sessionId?: string): Promise<RepoSignals> {
+  if (!USE_MOCKS && (sessionId || updated.sessionId)) {
+    const targetSessionId = sessionId || updated.sessionId!
+    const patchPayload = adaptRepoSignalsToPatchRequest(updated)
+    await backendClient.patchSignals(targetSessionId, patchPayload)
+    const refreshed = await backendClient.getSignals(targetSessionId)
+    currentSignals = adaptBackendSignalsToRepoSignals(refreshed)
+    return currentSignals
+  }
+
   await delay(500)
   currentSignals = JSON.parse(JSON.stringify(updated))
   return currentSignals
+}
+
+/**
+ * Confirm reviewed signals and lock them before moving to diagnostic Q&A
+ */
+export async function confirmSignals(sessionId?: string): Promise<{ success: boolean; status?: string }> {
+  if (!USE_MOCKS && sessionId) {
+    const res = await backendClient.confirmSignals(sessionId)
+    return { success: true, status: res.status }
+  }
+  await delay(300)
+  return { success: true }
 }
 
 /**
@@ -160,6 +219,7 @@ export async function getAdvisorMessages(): Promise<AdvisorMessage[]> {
 
 /**
  * Send message to Advisor chat
+ * Kept in its own function so it can easily swap to a real endpoint later without touching the view.
  */
 export async function sendAdvisorMessage(content: string): Promise<AdvisorMessage> {
   await delay(800)

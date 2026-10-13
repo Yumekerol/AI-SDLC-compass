@@ -40,9 +40,13 @@ function goBack() {
   router.push('/')
 }
 
-function handleContinue() {
-  store.setStep(3)
-  router.push('/questions')
+async function handleContinue() {
+  try {
+    await store.confirmSignals()
+    router.push('/questions')
+  } catch {
+    // Handled in store error state
+  }
 }
 </script>
 

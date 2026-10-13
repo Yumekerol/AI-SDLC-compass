@@ -48,6 +48,7 @@ export interface WarningSignal {
 }
 
 export interface RepoSignals {
+  sessionId?: string
   repoName: string
   repoUrl?: string
   commitHash?: string
