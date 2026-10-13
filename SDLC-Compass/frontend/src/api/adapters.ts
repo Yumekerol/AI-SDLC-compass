@@ -1,5 +1,16 @@
 import type { RepoSignals } from '@/types/signals'
-import type { BackendSignalsResponse, BackendPatchSignalsRequest } from './types'
+import type {
+  DiagnosticReport,
+  Recommendation,
+  PhaseReportSection,
+  RecommendationPriority
+} from '@/types/diagnostic'
+import type {
+  BackendSignalsResponse,
+  BackendPatchSignalsRequest,
+  BackendSynthesisOutput,
+  BackendRecommendation
+} from './types'
 
 /**
  * Transforms FastAPI backend scanner response into the frontend RepoSignals model.
@@ -184,4 +195,137 @@ export function adaptRepoSignalsToPatchRequest(signals: RepoSignals): BackendPat
 function capitalize(text: string): string {
   if (!text) return ''
   return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/**
+ * Adapts FastAPI backend synthesis output into frontend DiagnosticReport model.
+ * Exactly maps the 4 domains:
+ * 1. requirements_design -> "Requirements & design"
+ * 2. code_refactoring -> "Development"
+ * 3. qa_testing -> "Testing"
+ * 4. devops_monitoring -> "Deployment & monitoring"
+ * And ensures quickWin is true ONLY for items in phase_2_quick_wins.
+ */
+export function adaptBackendReportToDiagnosticReport(raw: BackendSynthesisOutput): DiagnosticReport {
+  const phased = raw.phased_recommendations || {}
+  const phase1 = phased.phase_1_foundation?.recommendations || []
+  const phase2 = phased.phase_2_quick_wins?.recommendations || []
+  const phase3 = phased.phase_3_advanced?.recommendations || []
+
+  // Extract all recommendations tagging whether they came from phase_2_quick_wins
+  interface TaggedRec {
+    item: BackendRecommendation
+    isQuickWin: boolean
+  }
+
+  const allTagged: TaggedRec[] = [
+    ...phase1.map((item) => ({ item, isQuickWin: false })),
+    ...phase2.map((item) => ({ item, isQuickWin: true })), // quickWin ONLY for phase_2_quick_wins
+    ...phase3.map((item) => ({ item, isQuickWin: false }))
+  ]
+
+  // The 4 domains specified by user
+  const DOMAIN_DEFS = [
+    { key: 'requirements_design', title: 'Requirements & design', scorecardKey: 'spec_hygiene' },
+    { key: 'code_refactoring', title: 'Development', scorecardKey: 'code_hygiene' },
+    { key: 'qa_testing', title: 'Testing', scorecardKey: 'harness_hygiene' },
+    { key: 'devops_monitoring', title: 'Deployment & monitoring', scorecardKey: 'ops_hygiene' }
+  ]
+
+  const phases: Record<string, PhaseReportSection> = {}
+  let highPriorityCount = 0
+  const quickWinsCount = phase2.length
+
+  DOMAIN_DEFS.forEach((dom) => {
+    // Find all recommendations for this domain
+    const domainRecs = allTagged.filter((t) => t.item.domain === dom.key)
+
+    const recs: Recommendation[] = domainRecs.map((tr) => {
+      const imp = tr.item.impact?.toLowerCase() || 'medium'
+      let priority: RecommendationPriority = 'low'
+      if (imp === 'critical' || imp === 'very_high') {
+        priority = 'high'
+        highPriorityCount++
+      } else if (imp === 'high') {
+        priority = 'medium'
+      }
+
+      return {
+        id: tr.item.id,
+        phase: dom.key,
+        title: tr.item.title,
+        priority,
+        effort: tr.item.effort || '1 sprint',
+        expectedImpact: tr.item.impact ? capitalize(tr.item.impact.replace('_', ' ')) : 'Moderate impact',
+        justification: tr.item.description,
+        examplePractice: tr.item.ai_relevance || 'Recommended AI-assisted team practice',
+        quickWin: tr.isQuickWin
+      }
+    })
+
+    // If a domain had no direct recommendations, derive one from the scorecard
+    if (recs.length === 0) {
+      const card = raw.readiness_scorecard?.[dom.scorecardKey] || raw.readiness_scorecard?.[dom.key]
+      recs.push({
+        id: `rec-${dom.key}-default`,
+        phase: dom.key,
+        title: card ? `Establish ${dom.title} AI Guardrails` : `Pilot ${dom.title} Refinement`,
+        priority: 'medium',
+        effort: '1 sprint',
+        expectedImpact: card ? `Score ${card.readiness_score}/10 readiness` : 'Foundational impact',
+        justification: card?.verdict || `Assessment completed for ${dom.title}.`,
+        examplePractice: 'Establish peer reviews and verifiable criteria before adopting autonomous tools.',
+        quickWin: false
+      })
+    }
+
+    phases[dom.key] = {
+      phase: dom.key,
+      title: dom.title,
+      recommendations: recs
+    }
+  })
+
+  // Executive summary
+  const exec = raw.executive_summary || {}
+  const repo = raw.repository || {}
+
+  return {
+    id: raw.session_id || `rep-${Date.now()}`,
+    repoName: repo.name || 'Repository',
+    generatedAt: raw.generated_at ? new Date(raw.generated_at).toLocaleString() : 'Generated just now',
+    headline: exec.headline || 'AI-SDLC Compass Diagnostic Assessment',
+    executiveSummary: exec.summary_text || 'Assessment synthesized across Spec, Code, Test, and Ops domains.',
+    metrics: {
+      highPriorityCount: Math.max(highPriorityCount, 1),
+      quickWinsCount,
+      phasesCoveredCount: 4
+    },
+    projectProfile: {
+      codeFilesSummary: `${repo.name || 'Repository'} scope with ${repo.languages?.join(', ') || 'code'} and ${repo.frameworks?.join(', ') || 'dependencies'}.`,
+      teamSummary: exec.overall_readiness ? `${capitalize(exec.overall_readiness)} readiness profile` : '8 members · Scrum',
+      aiMaturitySummary: `Overall AI Readiness Index: ${exec.overall_readiness_score || 5.0} / 10`,
+      qualitySummary: raw.readiness_scorecard?.harness_hygiene?.verdict || 'Quality indicators evaluated from repository evidence.'
+    },
+    evidenceGapAlert:
+      raw.knowledge_gaps_summary?.unresolved_gaps && raw.knowledge_gaps_summary.unresolved_gaps.length > 0
+        ? {
+            title: 'Unresolved knowledge gaps detected',
+            description: `${raw.knowledge_gaps_summary.unresolved_gaps.length} areas were not fully confirmed during team context and rely on default heuristics.`
+          }
+        : undefined,
+    phases,
+    scopeAndLimitations: {
+      currentPocScope: [
+        raw.disclaimers?.scope || 'This diagnostic covers the reviewed repository scope only.',
+        raw.disclaimers?.accuracy || 'Signals are estimates based on static analysis; executed metrics were not measured.',
+        raw.disclaimers?.affiliation || 'Independent concept. Not affiliated with or endorsed by Accenture.'
+      ],
+      enterpriseRoadmap: [
+        'Multi-repository portfolio scanning and aggregated organizational dashboards',
+        'Direct pipeline gate integration with automated PR comments and security checks',
+        'Continuous AI readiness tracking over sprint cycles'
+      ]
+    }
+  }
 }

@@ -5,7 +5,13 @@ import type {
   BackendUploadZipResponse,
   BackendScanTriggerResponse,
   BackendSignalsResponse,
-  BackendPatchSignalsRequest
+  BackendPatchSignalsRequest,
+  BackendDiagnoseResponse,
+  BackendConversationResponse,
+  BackendSendMessageResponse,
+  BackendKnowledgeGapsResponse,
+  BackendContinueDiagnosticResponse,
+  BackendSynthesisOutput
 } from './types'
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api/v1'
@@ -174,4 +180,142 @@ export async function confirmSignals(sessionId: string): Promise<{ session_id: s
   return request<{ session_id: string; status: string }>(`/sessions/${sessionId}/confirm-signals`, {
     method: 'POST'
   })
+}
+
+/**
+ * Step 3: Start diagnostic Q&A and fetch kickoff agent messages
+ */
+export async function startDiagnostic(sessionId: string): Promise<BackendDiagnoseResponse> {
+  return request<BackendDiagnoseResponse>(`/sessions/${sessionId}/diagnose`, {
+    method: 'POST'
+  })
+}
+
+/**
+ * Step 3: Get full diagnostic conversation history and agent statuses
+ */
+export async function getConversation(sessionId: string): Promise<BackendConversationResponse> {
+  return request<BackendConversationResponse>(`/sessions/${sessionId}/conversation`, {
+    method: 'GET'
+  })
+}
+
+/**
+ * Step 3: Send user response in diagnostic conversation
+ */
+export async function sendConversationMessage(
+  sessionId: string,
+  content: string,
+  respondingToQuestions?: string[]
+): Promise<BackendSendMessageResponse> {
+  return request<BackendSendMessageResponse>(`/sessions/${sessionId}/conversation`, {
+    method: 'POST',
+    body: JSON.stringify({
+      content,
+      responding_to_questions: respondingToQuestions || []
+    })
+  })
+}
+
+/**
+ * Step 3: Fetch unresolved knowledge gaps for side panel
+ */
+export async function getKnowledgeGaps(sessionId: string): Promise<BackendKnowledgeGapsResponse> {
+  return request<BackendKnowledgeGapsResponse>(`/sessions/${sessionId}/knowledge-gaps`, {
+    method: 'GET'
+  })
+}
+
+/**
+ * Step 3: Save draft of current conversation state
+ */
+export async function saveDraft(
+  sessionId: string,
+  conversation?: unknown[],
+  agentStatuses?: Record<string, unknown>
+): Promise<{ status: string }> {
+  return request<{ status: string }>(`/sessions/${sessionId}/draft`, {
+    method: 'POST',
+    body: JSON.stringify({
+      conversation,
+      agent_statuses: agentStatuses
+    })
+  })
+}
+
+/**
+ * Step 3 -> 4: Trigger report synthesis with timeout and retry support
+ */
+export async function continueDiagnostic(
+  sessionId: string,
+  timeoutMs = 60000
+): Promise<BackendContinueDiagnosticResponse> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const res = await request<BackendContinueDiagnosticResponse>(
+      `/sessions/${sessionId}/continue-diagnostic`,
+      {
+        method: 'POST',
+        signal: controller.signal
+      }
+    )
+    clearTimeout(timeoutId)
+    return res
+  } catch (err: unknown) {
+    clearTimeout(timeoutId)
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new ApiError(
+        'Diagnostic synthesis timed out after 60 seconds. The agents may still be processing.',
+        'timeout'
+      )
+    }
+    throw err
+  }
+}
+
+/**
+ * Step 4: Fetch final synthesized diagnostic report JSON
+ */
+export async function getReport(sessionId: string): Promise<BackendSynthesisOutput> {
+  return request<BackendSynthesisOutput>(`/sessions/${sessionId}/report`, {
+    method: 'GET'
+  })
+}
+
+/**
+ * Step 4: Download PDF report as a binary blob
+ */
+export async function downloadReportBlob(
+  sessionId: string
+): Promise<{ blob: Blob; filename: string; isPdf: boolean }> {
+  const url = `${API_BASE}/sessions/${sessionId}/report/pdf`
+  let response: Response
+
+  try {
+    response = await fetch(url)
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Network request failed'
+    throw new ApiError(`Unable to download report from ${url}. (${errorMsg})`, 'network')
+  }
+
+  if (!response.ok) {
+    throw new ApiError(`Failed to download report (HTTP ${response.status})`, 'api_error', response.status)
+  }
+
+  const contentType = response.headers.get('content-type') || ''
+  const isPdf = contentType.includes('pdf')
+  const disposition = response.headers.get('content-disposition') || ''
+  let filename = isPdf
+    ? `AI-SDLC-Compass-Report-${sessionId.slice(0, 8)}.pdf`
+    : `AI-SDLC-Compass-Report-${sessionId.slice(0, 8)}.html`
+
+  const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+  if (match && match[1]) {
+    filename = match[1].replace(/['"]/g, '')
+  }
+
+  const blob = await response.blob()
+  return { blob, filename, isPdf }
 }

@@ -172,3 +172,123 @@ export interface BackendSignalsResponse {
 export interface BackendPatchSignalsRequest {
   signal_groups: Record<string, { data: Record<string, unknown> }>
 }
+
+// ─── Batch 2: Diagnostic Conversation & Report ────────────────────────
+
+export interface BackendDiagnosticQuestion {
+  question_id: string
+  text: string
+  priority: string
+  tdm_field: string
+  answered?: boolean
+  answer?: string | null
+}
+
+export interface BackendConversationMessage {
+  id: string
+  role: 'supervisor' | 'agent' | 'user'
+  agent_domain?: string | null
+  agent_label?: string | null
+  content: string
+  questions?: BackendDiagnosticQuestion[]
+  timestamp: string
+}
+
+export interface BackendDiagnoseResponse {
+  session_id: string
+  status: string
+  initial_messages: BackendConversationMessage[]
+  agent_statuses?: Record<string, { status: string; progress: number }>
+}
+
+export interface BackendConversationResponse {
+  session_id: string
+  messages: BackendConversationMessage[]
+  agent_statuses: Record<string, { status: string; progress: number }>
+}
+
+export interface BackendSendMessageRequest {
+  content: string
+  responding_to_questions?: string[]
+}
+
+export interface BackendSendMessageResponse {
+  session_id: string
+  agent_statuses: Record<string, { status: string; progress: number }>
+  new_messages: BackendConversationMessage[]
+}
+
+export interface BackendKnowledgeGapsResponse {
+  session_id: string
+  gaps: Record<string, string[]>
+}
+
+export interface BackendContinueDiagnosticResponse {
+  session_id: string
+  status: string
+  report_ready: boolean
+}
+
+export interface BackendReadinessScore {
+  domain: string
+  domain_label: string
+  readiness_score: number
+  opportunity_score: number
+  readiness_label: string
+  verdict: string
+}
+
+export interface BackendRecommendation {
+  id: string
+  title: string
+  domain: string
+  description: string
+  effort: string
+  impact: string
+  risk_level: string
+  prerequisites?: string[]
+  ai_relevance?: string
+  is_foundation?: boolean
+}
+
+export interface BackendRecommendationPhase {
+  phase_label: string
+  phase_description: string
+  estimated_effort: string
+  recommendations: BackendRecommendation[]
+}
+
+export interface BackendSynthesisOutput {
+  session_id: string
+  generated_at?: string
+  repository?: {
+    name?: string
+    branch?: string
+    commit_hash?: string
+    languages?: string[]
+    frameworks?: string[]
+  }
+  executive_summary?: {
+    headline?: string
+    overall_readiness?: string
+    overall_readiness_score?: number
+    summary_text?: string
+  }
+  readiness_scorecard?: Record<string, BackendReadinessScore>
+  phased_recommendations?: {
+    phase_1_foundation?: BackendRecommendationPhase
+    phase_2_quick_wins?: BackendRecommendationPhase
+    phase_3_advanced?: BackendRecommendationPhase
+  }
+  knowledge_gaps_summary?: {
+    total_resolved?: number
+    total_asked?: number
+    unresolved_gaps?: Array<Record<string, unknown>>
+  }
+  disclaimers?: {
+    scope?: string
+    accuracy?: string
+    affiliation?: string
+  }
+}
+

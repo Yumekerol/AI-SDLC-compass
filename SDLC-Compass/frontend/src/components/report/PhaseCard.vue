@@ -2,7 +2,7 @@
 import type { Recommendation, SdlcPhase } from '@/types/diagnostic'
 
 defineProps<{
-  phase: SdlcPhase
+  phase: SdlcPhase | string
   phaseTitle: string
   recommendation: Recommendation
 }>()
@@ -29,8 +29,8 @@ function getPriorityBadgeClass(priority: string): string {
       <div class="phase-identity-row">
         <div class="phase-tag">
           <div class="phase-icon" aria-hidden="true">
-            <!-- Requirements Icon -->
-            <svg v-if="phase === 'requirements'" viewBox="0 0 20 20" fill="currentColor">
+            <!-- Requirements & Design Icon -->
+            <svg v-if="phase === 'requirements' || phase === 'requirements_design'" viewBox="0 0 20 20" fill="currentColor">
               <path
                 d="M3 4a2 2 0 0 0-2 2v1.161l8.441 4.221a1.25 1.25 0 0 0 1.118 0L19 7.162V6a2 2 0 0 0-2-2H3Z"
               />
@@ -47,7 +47,7 @@ function getPriorityBadgeClass(priority: string): string {
               />
             </svg>
             <!-- Development Icon -->
-            <svg v-else-if="phase === 'development'" viewBox="0 0 20 20" fill="currentColor">
+            <svg v-else-if="phase === 'development' || phase === 'code_refactoring'" viewBox="0 0 20 20" fill="currentColor">
               <path
                 fill-rule="evenodd"
                 d="M6.28 5.22a.75.75 0 0 1 0 1.06L2.56 10l3.72 3.72a.75.75 0 0 1-1.06 1.06L.97 10.53a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Zm7.44 0a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L17.44 10l-3.72-3.72a.75.75 0 0 1 0-1.06ZM11.377 2.011a.75.75 0 0 1 .612.867l-2.5 14.5a.75.75 0 0 1-1.478-.256l2.5-14.5a.75.75 0 0 1 .866-.611Z"
@@ -55,25 +55,17 @@ function getPriorityBadgeClass(priority: string): string {
               />
             </svg>
             <!-- Testing Icon -->
-            <svg v-else-if="phase === 'testing'" viewBox="0 0 20 20" fill="currentColor">
+            <svg v-else-if="phase === 'testing' || phase === 'qa_testing'" viewBox="0 0 20 20" fill="currentColor">
               <path
                 fill-rule="evenodd"
                 d="M9 3.5a1.5 1.5 0 0 1 1.5-1.5h1A1.5 1.5 0 0 1 13 3.5v.75A6.5 6.5 0 0 1 17.5 10v4.75a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 14.75V10A6.5 6.5 0 0 1 9 4.25V3.5ZM10.5 5a5 5 0 0 0-4.5 5v4.75c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75V10a5 5 0 0 0-4.5-5h-1Z"
                 clip-rule="evenodd"
               />
             </svg>
-            <!-- Deployment Icon -->
-            <svg v-else-if="phase === 'deployment'" viewBox="0 0 20 20" fill="currentColor">
-              <path
-                d="M10 2a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 2ZM10 15a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 15ZM10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"
-              />
-            </svg>
-            <!-- Monitoring Icon -->
+            <!-- Deployment & Monitoring Icon -->
             <svg v-else viewBox="0 0 20 20" fill="currentColor">
               <path
-                fill-rule="evenodd"
-                d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm.75-11.25a.75.75 0 0 0-1.5 0v2.5h-2.5a.75.75 0 0 0 0 1.5h2.5v2.5a.75.75 0 0 0 1.5 0v-2.5h2.5a.75.75 0 0 0 0-1.5h-2.5v-2.5Z"
-                clip-rule="evenodd"
+                d="M10 2a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 2ZM10 15a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 15ZM10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"
               />
             </svg>
           </div>
@@ -93,7 +85,7 @@ function getPriorityBadgeClass(priority: string): string {
 
       <!-- Practice Description / Snippet -->
       <p class="recommendation-narrative">
-        Pilot AI-assisted story refinement. Draft Given / When / Then acceptance criteria from sanitised requirements, then have the product owner and QA validate every scenario.
+        {{ recommendation.justification }}
       </p>
 
       <div class="example-practice-box">

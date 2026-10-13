@@ -225,18 +225,28 @@ export const useSessionStore = defineStore('session', () => {
         isLoading.value = true
         loadingMessage.value = 'Synthesizing evidence & generating 4-domain AI diagnostic...'
         const signals = repoSignals.value || mockRepoSignals
-        const report = await api.generateDiagnostic(signals, answersList.value)
+        const report = await api.generateDiagnostic(
+          signals,
+          answersList.value,
+          sessionId.value || undefined,
+          (msg) => {
+            loadingMessage.value = msg
+          }
+        )
         diagnostic.value = report
         currentStep.value = 4
       } catch (err: unknown) {
         const anyErr = err as { code?: string; message?: string }
-        if (anyErr.code === 'ai_down') {
+        if (anyErr.code === 'ai_down' || anyErr.code === 'timeout') {
           setError(
             {
               type: 'ai_down',
-              title: 'AI Service Unavailable',
-              message: 'The AI Diagnostic engine is currently unreachable. Your answers are safely preserved.',
-              details: 'Click retry to re-submit your signals and answers without losing any input.',
+              title: anyErr.code === 'timeout' ? 'Synthesis Timed Out' : 'AI Service Unavailable',
+              message:
+                anyErr.code === 'timeout'
+                  ? 'Report generation took longer than 60 seconds. Your answers and reviewed signals are safely preserved.'
+                  : 'The AI Diagnostic engine is currently unreachable. Your answers are safely preserved.',
+              details: 'Click retry to re-submit synthesis without losing any input.',
               canRetry: true,
               retryActionName: 'Retry AI Generation'
             },
@@ -276,7 +286,14 @@ export const useSessionStore = defineStore('session', () => {
         isLoading.value = true
         loadingMessage.value = 'Regenerating diagnostic report with fresh recommendations...'
         const signals = repoSignals.value || mockRepoSignals
-        const report = await api.regenerateDiagnostic(signals, answersList.value)
+        const report = await api.regenerateDiagnostic(
+          signals,
+          answersList.value,
+          sessionId.value || undefined,
+          (msg) => {
+            loadingMessage.value = msg
+          }
+        )
         diagnostic.value = report
       } catch (err: unknown) {
         const anyErr = err as { message?: string }

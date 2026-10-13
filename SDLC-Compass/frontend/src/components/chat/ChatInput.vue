@@ -47,7 +47,7 @@ function handleKeyDown(e: KeyboardEvent) {
   <div class="chat-composer-box card">
     <!-- Suggestion Chips Row -->
     <div v-if="chips && chips.length > 0" class="chips-section">
-      <span class="chips-label">Quick suggestions:</span>
+      <span class="chips-label">Optional suggestions:</span>
       <div class="chips-list" role="group" aria-label="Quick answer suggestions">
         <SuggestionChip
           v-for="chip in chips"

@@ -28,14 +28,47 @@ const report = computed<DiagnosticReport>(() => {
   return store.diagnostic || mockDiagnosticReport
 })
 
-const orderedPhases: { key: SdlcPhase; title: string }[] = [
-  { key: 'requirements', title: 'Requirements' },
-  { key: 'design', title: 'Design' },
-  { key: 'development', title: 'Development' },
-  { key: 'testing', title: 'Testing' },
-  { key: 'deployment', title: 'Deployment' },
-  { key: 'monitoring', title: 'Monitoring' }
-]
+const orderedPhases = computed<{ key: SdlcPhase; title: string }[]>(() => {
+  if (
+    report.value.phases['requirements_design'] ||
+    report.value.phases['code_refactoring'] ||
+    report.value.phases['qa_testing'] ||
+    report.value.phases['devops_monitoring']
+  ) {
+    return [
+      { key: 'requirements_design', title: 'Requirements & design' },
+      { key: 'code_refactoring', title: 'Development' },
+      { key: 'qa_testing', title: 'Testing' },
+      { key: 'devops_monitoring', title: 'Deployment & monitoring' }
+    ]
+  }
+  return [
+    { key: 'requirements', title: 'Requirements' },
+    { key: 'design', title: 'Design' },
+    { key: 'development', title: 'Development' },
+    { key: 'testing', title: 'Testing' },
+    { key: 'deployment', title: 'Deployment' },
+    { key: 'monitoring', title: 'Monitoring' }
+  ]
+})
+
+function getRecommendationForPhase(key: string): any {
+  const section = report.value.phases[key]
+  if (section && section.recommendations && section.recommendations.length > 0) {
+    return section.recommendations[0]
+  }
+  return {
+    id: `rec-${key}-fallback`,
+    phase: key,
+    title: 'Establish AI Guardrails & Verification',
+    priority: 'medium',
+    effort: '1 sprint',
+    expectedImpact: 'Foundational impact',
+    justification: 'Assessment completed across available repository evidence.',
+    examplePractice: 'Establish peer reviews and verifiable criteria before adopting autonomous tools.',
+    quickWin: false
+  }
+}
 
 // Actions
 async function handleRegenerate() {
@@ -51,13 +84,16 @@ async function handleExportPdf() {
   isExporting.value = true
   exportNotice.value = ''
   try {
-    const res = await api.exportPdfReport()
-    exportNotice.value = `Report successfully exported: ${res.filename}`
+    const res = await api.exportPdfReport(store.sessionId || undefined)
+    exportNotice.value = res.isPdf
+      ? `Report successfully downloaded as PDF: ${res.filename}`
+      : `Report downloaded as HTML deliverable: ${res.filename} (PDF renderer not available on host)`
     setTimeout(() => {
       exportNotice.value = ''
-    }, 5000)
-  } catch {
-    exportNotice.value = 'PDF export failed. Please retry.'
+    }, 6000)
+  } catch (err: unknown) {
+    const anyErr = err as { message?: string }
+    exportNotice.value = anyErr.message || 'Report download failed. Please retry.'
   } finally {
     isExporting.value = false
   }
@@ -221,7 +257,7 @@ function goBackToQuestions() {
         :key="phaseObj.key"
         :phase="phaseObj.key"
         :phase-title="phaseObj.title"
-        :recommendation="report.phases[phaseObj.key].recommendations[0]"
+        :recommendation="getRecommendationForPhase(phaseObj.key)"
       />
     </div>
 

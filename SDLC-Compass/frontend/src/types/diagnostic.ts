@@ -5,12 +5,17 @@ export type SdlcPhase =
   | 'testing'
   | 'deployment'
   | 'monitoring'
+  | 'requirements_design'
+  | 'code_refactoring'
+  | 'qa_testing'
+  | 'devops_monitoring'
+  | 'deployment_monitoring'
 
 export type RecommendationPriority = 'high' | 'medium' | 'low'
 
 export interface Recommendation {
   id: string
-  phase: SdlcPhase
+  phase: SdlcPhase | string
   title: string
   priority: RecommendationPriority
   effort: string
@@ -21,7 +26,7 @@ export interface Recommendation {
 }
 
 export interface PhaseReportSection {
-  phase: SdlcPhase
+  phase: SdlcPhase | string
   title: string
   recommendations: Recommendation[]
 }
@@ -47,7 +52,7 @@ export interface DiagnosticReport {
     title: string
     description: string
   }
-  phases: Record<SdlcPhase, PhaseReportSection>
+  phases: Record<string, PhaseReportSection>
   scopeAndLimitations: {
     currentPocScope: string[]
     enterpriseRoadmap: string[]

@@ -15,7 +15,11 @@ import {
   mockInitialAdvisorMessages
 } from '@/mocks'
 import * as backendClient from './backendClient'
-import { adaptBackendSignalsToRepoSignals, adaptRepoSignalsToPatchRequest } from './adapters'
+import {
+  adaptBackendSignalsToRepoSignals,
+  adaptRepoSignalsToPatchRequest,
+  adaptBackendReportToDiagnosticReport
+} from './adapters'
 
 export * from './types'
 export * from './adapters'
@@ -166,12 +170,27 @@ export async function submitAnswer(answer: UserAnswer): Promise<{ success: boole
 }
 
 /**
- * Generate diagnostic report for the 6 SDLC phases
+ * Generate diagnostic report.
+ * When USE_MOCKS is false, calls continue-diagnostic, gets report JSON, and adapts to 4 domain cards.
  */
 export async function generateDiagnostic(
   signals: RepoSignals,
-  answers: UserAnswer[]
+  answers: UserAnswer[],
+  sessionId?: string,
+  onProgress?: (message: string) => void
 ): Promise<DiagnosticReport> {
+  if (!USE_MOCKS && (sessionId || signals.sessionId)) {
+    const targetSessionId = sessionId || signals.sessionId!
+    onProgress?.('Synthesizing evidence across all 4 specialist domains...')
+    await backendClient.continueDiagnostic(targetSessionId)
+
+    onProgress?.('Retrieving synthesized diagnostic assessment...')
+    const rawReport = await backendClient.getReport(targetSessionId)
+    currentDiagnostic = adaptBackendReportToDiagnosticReport(rawReport)
+    return currentDiagnostic
+  }
+
+  // --- Mock Mode ---
   await delay(1500)
 
   // Simulation check for AI downtime trigger
@@ -191,14 +210,12 @@ export async function generateDiagnostic(
  * Regenerate diagnostic report (creating a fresh version)
  */
 export async function regenerateDiagnostic(
-  _signals: RepoSignals,
-  _answers: UserAnswer[]
+  signals: RepoSignals,
+  answers: UserAnswer[],
+  sessionId?: string,
+  onProgress?: (message: string) => void
 ): Promise<DiagnosticReport> {
-  await delay(1400)
-  const updated = JSON.parse(JSON.stringify(mockDiagnosticReport))
-  updated.generatedAt = 'Regenerated just now'
-  currentDiagnostic = updated
-  return currentDiagnostic
+  return generateDiagnostic(signals, answers, sessionId, onProgress)
 }
 
 /**
@@ -248,12 +265,35 @@ export async function sendAdvisorMessage(content: string): Promise<AdvisorMessag
 }
 
 /**
- * Export diagnostic report to PDF
+ * Export diagnostic report to PDF (or HTML deliverable if PDF renderer not installed)
+ * Downloads as a binary blob.
  */
-export async function exportPdfReport(): Promise<{ success: boolean; filename: string }> {
+export async function exportPdfReport(
+  sessionId?: string
+): Promise<{ success: boolean; filename: string; isPdf?: boolean }> {
+  if (!USE_MOCKS && sessionId) {
+    const { blob, filename, isPdf } = await backendClient.downloadReportBlob(sessionId)
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+
+    return {
+      success: true,
+      filename,
+      isPdf
+    }
+  }
+
+  // --- Mock Mode ---
   await delay(800)
   return {
     success: true,
-    filename: `AI-SDLC-Compass-Report-${Date.now()}.pdf`
+    filename: `AI-SDLC-Compass-Report-${Date.now()}.pdf`,
+    isPdf: true
   }
 }

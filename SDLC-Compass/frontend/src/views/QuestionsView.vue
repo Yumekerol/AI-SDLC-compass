@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import * as api from '@/api'
-import type { Question, TopicProgress, UserAnswer } from '@/types/questions'
+import type { Question, TopicProgress, UserAnswer, SuggestionChipItem } from '@/types/questions'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import TopicsProgress from '@/components/chat/TopicsProgress.vue'
@@ -27,6 +27,14 @@ const currentQuestionIndex = ref<number>(0)
 const chatMessages = ref<DisplayMessage[]>([])
 const topics = ref<TopicProgress[]>([])
 
+// Generic and clearly optional chips as requested (not pretending to come from backend)
+const genericChips = computed<SuggestionChipItem[]>(() => [
+  { id: 'c-skip', label: 'Skip this question', value: 'Question skipped by team. Proceed with available repository signals.' },
+  { id: 'c-std', label: 'Standard practice adopted', value: 'We follow standard team practices and documented guidelines for this area.' },
+  { id: 'c-backlog', label: 'Tracked in team backlog', value: 'This is actively tracked as backlog tasks or technical debt in our delivery process.' },
+  { id: 'c-informal', label: 'Ad-hoc / exploratory workflow', value: 'Our team currently manages this informally without standardized tooling.' }
+])
+
 onMounted(async () => {
   store.ensureSampleSignals()
   store.setStep(3)
@@ -34,11 +42,73 @@ onMounted(async () => {
   try {
     questionsList.value = await api.getQuestions()
   } catch {
-    // Fallback if network was simulated
     questionsList.value = []
   }
 
-  // Build initial topics progress
+  // Real backend initialization if connected
+  if (!api.USE_MOCKS && store.sessionId) {
+    try {
+      const diagRes = await api.backendClient.startDiagnostic(store.sessionId)
+      if (diagRes.initial_messages && diagRes.initial_messages.length > 0) {
+        chatMessages.value = diagRes.initial_messages.map((m) => {
+          let agentName = m.agent_label || 'Specialist'
+          let initial = 'A'
+          let roleBadge = 'Specialist agent'
+
+          if (m.role === 'supervisor') {
+            agentName = 'Supervisor'
+            initial = 'S'
+            roleBadge = 'Gathering context'
+          } else if (m.agent_domain) {
+            initial = m.agent_domain.charAt(0).toUpperCase()
+            roleBadge = `${m.agent_label || 'Specialist'} · Needs clarification`
+          }
+
+          return {
+            id: m.id,
+            sender: m.role === 'user' ? 'user' : 'agent',
+            agentInitial: initial,
+            agentName,
+            roleBadge,
+            text: m.content,
+            timestamp: m.timestamp
+              ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : '09:41'
+          }
+        })
+      }
+
+      await api.backendClient.getKnowledgeGaps(store.sessionId)
+
+      const domains = [
+        { id: 'requirements_design', name: 'Requirements & Design' },
+        { id: 'code_refactoring', name: 'Code & Refactoring' },
+        { id: 'qa_testing', name: 'QA & Testing' },
+        { id: 'devops_monitoring', name: 'DevOps & Monitoring' }
+      ]
+
+      topics.value = domains.map((d) => {
+        const statusObj = diagRes.agent_statuses?.[d.id]
+        let status: 'completed' | 'current' | 'pending' = 'pending'
+        if (statusObj) {
+          if (statusObj.status === 'complete' || statusObj.progress >= 1.0) status = 'completed'
+          else if (statusObj.status === 'waiting_for_input' || statusObj.status === 'analyzing')
+            status = 'current'
+        }
+        return {
+          id: d.id,
+          name: d.name,
+          status
+        }
+      })
+
+      return
+    } catch (err) {
+      console.warn('Backend diagnostic load failed, falling back to local questions:', err)
+    }
+  }
+
+  // Build initial topics progress for mock flow
   topics.value = questionsList.value.map((q, idx) => ({
     id: q.id,
     name: q.topic,
@@ -52,7 +122,7 @@ onMounted(async () => {
     agentInitial: 'S',
     agentName: 'Supervisor',
     roleBadge: 'Gathering context',
-    text: `Atlas Service has 48 code files, FastAPI + React, 6 test files / 42 source files, and a build.yml with a build job but no detected test or deploy job. We'll start with ways of working, pain points and AI readiness.`,
+    text: `${store.repoSignals?.repoName || 'Atlas Service'} has ${store.repoSignals?.totalSupportedFiles || 48} code files. We will start with ways of working, pain points and AI readiness across the 4 SDLC domains.`,
     timestamp: '09:41'
   })
 
@@ -107,14 +177,12 @@ function postAgentQuestion(index: number) {
 
 // User submits an answer (via suggestion chip or typed input)
 async function handleUserAnswer(answerText: string) {
-  if (!currentQuestion.value) return
-
   const activeQ = currentQuestion.value
   const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
   // 1. Append user message to UI
   chatMessages.value.push({
-    id: `msg-user-${activeQ.id}`,
+    id: `msg-user-${Date.now()}`,
     sender: 'user',
     agentName: 'Team representative',
     roleBadge: 'Response',
@@ -123,35 +191,69 @@ async function handleUserAnswer(answerText: string) {
     isSkipped: false
   })
 
-  // 2. Persist in Pinia store
-  const answerPayload: UserAnswer = {
-    questionId: activeQ.id,
-    topic: activeQ.topic,
-    answerText,
-    skipped: false,
-    timestamp: now
-  }
-  await store.recordAnswer(answerPayload)
+  // 2. Real backend turn if connected
+  if (!api.USE_MOCKS && store.sessionId) {
+    try {
+      const res = await api.backendClient.sendConversationMessage(store.sessionId, answerText)
+      if (res.new_messages && res.new_messages.length > 0) {
+        res.new_messages.forEach((m) => {
+          chatMessages.value.push({
+            id: m.id,
+            sender: m.role === 'user' ? 'user' : 'agent',
+            agentInitial:
+              m.role === 'supervisor' ? 'S' : m.agent_domain?.charAt(0).toUpperCase() || 'A',
+            agentName: m.agent_label || (m.role === 'supervisor' ? 'Supervisor' : 'Specialist Agent'),
+            roleBadge: m.role === 'supervisor' ? 'Supervisor synthesis' : 'Specialist clarification',
+            text: m.content,
+            timestamp: now
+          })
+        })
+      }
 
-  // 3. Mark current topic as completed
+      if (res.agent_statuses) {
+        topics.value.forEach((t) => {
+          const st = res.agent_statuses[t.id]
+          if (st) {
+            if (st.status === 'complete' || st.progress >= 1.0) t.status = 'completed'
+            else if (st.status === 'waiting_for_input' || st.status === 'analyzing') t.status = 'current'
+          }
+        })
+      }
+
+      api.backendClient.saveDraft(store.sessionId, chatMessages.value, res.agent_statuses).catch(() => {})
+    } catch (err) {
+      console.warn('Failed to send conversation message to backend:', err)
+    }
+  }
+
+  // 3. Persist in Pinia store
+  if (activeQ) {
+    const answerPayload: UserAnswer = {
+      questionId: activeQ.id,
+      topic: activeQ.topic,
+      answerText,
+      skipped: false,
+      timestamp: now
+    }
+    await store.recordAnswer(answerPayload)
+  }
+
+  // 4. Mark current topic as completed
   if (topics.value[currentQuestionIndex.value]) {
     topics.value[currentQuestionIndex.value].status = 'completed'
   }
 
-  // 4. Advance to next question
   advanceNextQuestion()
 }
 
 // User skips the question
 async function handleUserSkip() {
-  if (!currentQuestion.value) return
-
   const activeQ = currentQuestion.value
   const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
   // 1. Append skipped message to UI
   chatMessages.value.push({
-    id: `msg-user-skipped-${activeQ.id}`,
+    id: `msg-user-skipped-${Date.now()}`,
     sender: 'user',
     agentName: 'Team representative',
     roleBadge: 'Response',
@@ -160,15 +262,28 @@ async function handleUserSkip() {
     isSkipped: true
   })
 
-  // 2. Persist skipped answer in Pinia store
-  await store.skipQuestion(activeQ.id, activeQ.topic)
+  // 2. Real backend turn if connected
+  if (!api.USE_MOCKS && store.sessionId) {
+    try {
+      await api.backendClient.sendConversationMessage(
+        store.sessionId,
+        'Question skipped by team. Proceed with available repository signals.'
+      )
+    } catch (err) {
+      console.warn('Failed to notify backend of skipped question:', err)
+    }
+  }
 
-  // 3. Mark topic completed (skipped)
+  // 3. Persist skipped answer in Pinia store
+  if (activeQ) {
+    await store.skipQuestion(activeQ.id, activeQ.topic)
+  }
+
+  // 4. Mark topic completed (skipped)
   if (topics.value[currentQuestionIndex.value]) {
     topics.value[currentQuestionIndex.value].status = 'completed'
   }
 
-  // 4. Advance
   advanceNextQuestion()
 }
 
@@ -179,12 +294,10 @@ function advanceNextQuestion() {
     if (topics.value[currentQuestionIndex.value]) {
       topics.value[currentQuestionIndex.value].status = 'current'
     }
-    // Simulate brief agent response delay
     setTimeout(() => {
       postAgentQuestion(currentQuestionIndex.value)
     }, 400)
   } else {
-    // All done!
     setTimeout(() => {
       chatMessages.value.push({
         id: 'msg-supervisor-done',
@@ -192,7 +305,7 @@ function advanceNextQuestion() {
         agentInitial: 'S',
         agentName: 'Supervisor',
         roleBadge: 'Context gathered',
-        text: 'All clarification questions are answered! The specialist agents now have sufficient contextual evidence to synthesize a grounded 6-phase SDLC diagnostic.',
+        text: 'All clarification questions are answered! The specialist agents now have sufficient contextual evidence to synthesize a grounded 4-domain SDLC diagnostic.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       })
     }, 400)
@@ -257,8 +370,8 @@ function goBackToSignals() {
           <!-- Active Question Composer (Only when questions remain) -->
           <div v-if="!isAllAnswered && currentQuestion" class="composer-container">
             <ChatInput
-              :chips="currentQuestion.suggestionChips"
-              :placeholder="currentQuestion.placeholder"
+              :chips="genericChips"
+              :placeholder="currentQuestion?.placeholder || 'Type your team\'s response or context...'"
               :disabled="store.isLoading"
               @submit="handleUserAnswer"
               @skip="handleUserSkip"
