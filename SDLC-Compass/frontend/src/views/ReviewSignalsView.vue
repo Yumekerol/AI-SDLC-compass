@@ -20,6 +20,8 @@ onMounted(() => {
 const signals = computed<RepoSignals>(() => {
   return store.repoSignals!
 })
+const isMock = computed(() => store.isMock)
+const evidenceLabel = computed(() => isMock.value ? 'SAMPLE EVIDENCE' : 'EVIDENCE')
 
 // Modal actions
 function openEdit(category: EditableSignalCategory) {
@@ -78,14 +80,23 @@ async function handleContinue() {
           <div class="repo-title-row">
             <h2 class="repo-name">{{ signals.repoName }}</h2>
             <span class="badge badge-success">Scan complete</span>
-            <span class="badge badge-purple">Sample data</span>
+            <span v-if="isMock" class="badge badge-purple">Sample data</span>
           </div>
           <div class="repo-submeta">
-            <span>sample/atlas-service</span>
-            <span>·</span>
-            <span>main</span>
-            <span>·</span>
-            <span>Illustrative commit {{ signals.commitHash || 'a8f2c10' }}</span>
+            <template v-if="isMock">
+              <span>sample/atlas-service</span>
+              <span>·</span>
+              <span>main</span>
+              <span>·</span>
+              <span>Illustrative commit {{ signals.commitHash || 'a8f2c10' }}</span>
+            </template>
+            <template v-else>
+              <span v-if="signals.repoUrl">{{ signals.repoUrl }}</span>
+              <template v-if="signals.commitHash">
+                <span>·</span>
+                <span>commit {{ signals.commitHash }}</span>
+              </template>
+            </template>
           </div>
         </div>
       </div>
@@ -104,7 +115,7 @@ async function handleContinue() {
     <div class="section-heading-row">
       <h2 class="section-title">Repository signals</h2>
       <span class="section-note">
-        Sample data · 6 editable signal groups · Estimates are not validated measurements
+        <template v-if="isMock">Sample data · </template>6 editable signal groups · Estimates are not validated measurements
       </span>
     </div>
 
@@ -116,6 +127,7 @@ async function handleContinue() {
         badge-text="High confidence · File extensions"
         badge-class="badge-purple"
         :sample-evidence="signals.languages.map((l) => `*.${l.name.toLowerCase().slice(0, 2)}`).join(' · ')"
+        :evidence-label="evidenceLabel"
         @edit="openEdit('languages')"
       >
         <template #icon>
@@ -158,6 +170,7 @@ async function handleContinue() {
         badge-text="Mixed confidence · Counts + estimates"
         badge-class="badge-info"
         :sample-evidence="signals.size.evidenceSummary"
+        :evidence-label="evidenceLabel"
         @edit="openEdit('size')"
       >
         <template #icon>
@@ -202,6 +215,7 @@ async function handleContinue() {
         badge-text="High confidence · Dependency manifests"
         badge-class="badge-purple"
         :sample-evidence="signals.stack.sampleEvidence"
+        :evidence-label="evidenceLabel"
         @edit="openEdit('stack')"
       >
         <template #icon>
@@ -240,6 +254,7 @@ async function handleContinue() {
         badge-text="Medium confidence · Config inspection"
         badge-class="badge-info"
         :sample-evidence="signals.cicd.sampleEvidence"
+        :evidence-label="evidenceLabel"
         @edit="openEdit('cicd')"
       >
         <template #icon>
@@ -280,6 +295,7 @@ async function handleContinue() {
         badge-text="Estimated proxy · Not executed coverage"
         badge-class="badge-purple"
         :sample-evidence="signals.quality.sampleEvidence"
+        :evidence-label="evidenceLabel"
         @edit="openEdit('quality')"
       >
         <template #icon>
@@ -321,6 +337,7 @@ async function handleContinue() {
         badge-text="Needs confirmation · Low confidence"
         badge-class="badge-warning"
         :sample-evidence="signals.warnings[0]?.sampleEvidence || '.github/workflows/build.yml'"
+        :evidence-label="evidenceLabel"
         @edit="openEdit('warnings')"
       >
         <template #icon>

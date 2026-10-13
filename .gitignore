@@ -21,6 +21,7 @@ node_modules/
 dist/
 dist-ssr/
 *.tsbuildinfo
+.vite/
 
 # Testing & Coverage
 .pytest_cache/

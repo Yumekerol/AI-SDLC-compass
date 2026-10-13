@@ -33,6 +33,8 @@ export const useSessionStore = defineStore('session', () => {
   const answersList = computed(() => Object.values(answers.value))
   const answeredCount = computed(() => answersList.value.filter((a) => !a.skipped).length)
   const hasDiagnostic = computed(() => !!diagnostic.value)
+  /** True when the displayed signals come from the in-memory mock fixture, not a real scan */
+  const isMock = computed(() => repoSignals.value?.fromMock !== false)
 
   // Session ID Synchronization
   function setSessionId(id: string | null) {
@@ -350,6 +352,7 @@ export const useSessionStore = defineStore('session', () => {
     answersList,
     answeredCount,
     hasDiagnostic,
+    isMock,
     // Actions
     setSessionId,
     connectRepository,

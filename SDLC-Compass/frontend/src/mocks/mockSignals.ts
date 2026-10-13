@@ -1,6 +1,7 @@
 import type { RepoSignals } from '@/types/signals'
 
 export const mockRepoSignals: RepoSignals = {
+  fromMock: true,
   repoName: 'Atlas Service',
   repoUrl: 'https://github.com/sample/atlas-service.git',
   commitHash: 'a8f2c10',

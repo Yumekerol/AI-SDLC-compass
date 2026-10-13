@@ -141,7 +141,8 @@ export function adaptBackendSignalsToRepoSignals(raw: BackendSignalsResponse): R
     stack,
     cicd,
     quality,
-    warnings
+    warnings,
+    fromMock: false
   }
 }
 

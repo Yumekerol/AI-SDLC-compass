@@ -27,6 +27,7 @@ onMounted(async () => {
 const report = computed<DiagnosticReport>(() => {
   return store.diagnostic || mockDiagnosticReport
 })
+const isMock = computed(() => store.isMock)
 
 const orderedPhases = computed<{ key: SdlcPhase; title: string }[]>(() => {
   if (
@@ -184,6 +185,7 @@ function goBackToQuestions() {
       :high-priority-count="report.metrics.highPriorityCount"
       :quick-wins-count="report.metrics.quickWinsCount"
       :phases-covered-count="report.metrics.phasesCoveredCount"
+      :is-mock="isMock"
     />
 
     <!-- 2. Project & Team Profile Snapshot -->
@@ -191,7 +193,7 @@ function goBackToQuestions() {
       <div class="profile-card-header">
         <h2 class="profile-card-title">Project & team profile</h2>
         <span class="profile-subtitle">
-          Sample data · Reviewed repository signals + self-declared team context
+          <template v-if="isMock">Sample data · </template>Reviewed repository signals + self-declared team context
         </span>
       </div>
 
@@ -244,7 +246,7 @@ function goBackToQuestions() {
       <div>
         <h2 class="section-title">Phase-by-phase recommendations</h2>
         <p class="section-sub">
-          Sample data · Qualitative expected outcomes, not guaranteed outcomes. Tool examples are illustrative.
+          <template v-if="isMock">Sample data · </template>Qualitative expected outcomes, not guaranteed outcomes. Tool examples are illustrative.
         </p>
       </div>
       <span class="badge badge-poc">Human review required</span>

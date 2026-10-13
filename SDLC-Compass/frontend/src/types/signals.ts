@@ -63,4 +63,6 @@ export interface RepoSignals {
   cicd: CiCdSignal
   quality: QualitySignal
   warnings: WarningSignal[]
+  /** True when data comes from the in-memory mock fixture rather than a real scan */
+  fromMock?: boolean
 }

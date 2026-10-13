@@ -5,6 +5,7 @@ defineProps<{
   highPriorityCount: number
   quickWinsCount: number
   phasesCoveredCount: number
+  isMock?: boolean
 }>()
 </script>
 
@@ -12,7 +13,7 @@ defineProps<{
   <div class="executive-banner-card">
     <div class="executive-content-left">
       <div class="banner-tag-row">
-        <span class="banner-tag">EXECUTIVE SUMMARY / SAMPLE DATA</span>
+        <span class="banner-tag">EXECUTIVE SUMMARY<template v-if="isMock"> / SAMPLE DATA</template></span>
       </div>
       <h2 class="executive-headline">{{ headline }}</h2>
       <p class="executive-narrative">{{ summary }}</p>

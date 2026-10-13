@@ -4,6 +4,7 @@ defineProps<{
   badgeText?: string
   badgeClass?: string
   sampleEvidence?: string
+  evidenceLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -54,7 +55,7 @@ const emit = defineEmits<{
 
     <!-- Sample Evidence Footer -->
     <div v-if="sampleEvidence" class="sample-evidence-row">
-      <span class="evidence-label">SAMPLE EVIDENCE</span>
+      <span class="evidence-label">{{ evidenceLabel || 'SAMPLE EVIDENCE' }}</span>
       <span class="evidence-value">{{ sampleEvidence }}</span>
     </div>
   </div>
