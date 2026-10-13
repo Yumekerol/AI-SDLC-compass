@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   readonly VITE_USE_MOCKS?: string
   readonly VITE_API_BASE?: string
+  /** Report synthesis timeout in milliseconds (default 180000 = 3 min) */
+  readonly VITE_REPORT_TIMEOUT_MS?: string
 }
 
 interface ImportMeta {

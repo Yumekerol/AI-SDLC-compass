@@ -244,7 +244,7 @@ export const useSessionStore = defineStore('session', () => {
               title: anyErr.code === 'timeout' ? 'Synthesis Timed Out' : 'AI Service Unavailable',
               message:
                 anyErr.code === 'timeout'
-                  ? 'Report generation took longer than 60 seconds. Your answers and reviewed signals are safely preserved.'
+                  ? 'Report generation timed out. Your answers and reviewed signals are safely preserved.'
                   : 'The AI Diagnostic engine is currently unreachable. Your answers are safely preserved.',
               details: 'Click retry to re-submit synthesis without losing any input.',
               canRetry: true,

@@ -16,6 +16,9 @@ import type {
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api/v1'
 
+/** Report synthesis timeout in ms — configurable via VITE_REPORT_TIMEOUT_MS (default 180 s) */
+export const REPORT_TIMEOUT_MS = Number(import.meta.env.VITE_REPORT_TIMEOUT_MS) || 180_000
+
 class ApiError extends Error {
   code: string
   status?: number
@@ -248,10 +251,11 @@ export async function saveDraft(
  */
 export async function continueDiagnostic(
   sessionId: string,
-  timeoutMs = 60000
+  timeoutMs = REPORT_TIMEOUT_MS
 ): Promise<BackendContinueDiagnosticResponse> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  const timeoutSecs = Math.round(timeoutMs / 1000)
 
   try {
     const res = await request<BackendContinueDiagnosticResponse>(
@@ -267,7 +271,7 @@ export async function continueDiagnostic(
     clearTimeout(timeoutId)
     if (err instanceof Error && err.name === 'AbortError') {
       throw new ApiError(
-        'Diagnostic synthesis timed out after 60 seconds. The agents may still be processing.',
+        `Diagnostic synthesis timed out after ${timeoutSecs} seconds. The agents may still be processing.`,
         'timeout'
       )
     }
