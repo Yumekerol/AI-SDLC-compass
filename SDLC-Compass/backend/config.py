@@ -37,12 +37,12 @@ class Settings(BaseSettings):
 
     # --- Paths ---
     base_dir: Path = Path(__file__).parent
-    data_dir: Path = Field(default=None)
-    workspaces_dir: Path = Field(default=None)
-    reports_dir: Path = Field(default=None)
+    data_dir: Path | None = None
+    workspaces_dir: Path | None = None
+    reports_dir: Path | None = None
 
     # --- Database ---
-    database_url: str = Field(default=None)
+    database_url: str | None = None
 
     # --- LLM Provider ---
     llm_provider: LLMProvider = LLMProvider.OLLAMA

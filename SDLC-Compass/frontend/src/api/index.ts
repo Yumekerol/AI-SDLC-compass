@@ -15,6 +15,13 @@ import {
   mockInitialAdvisorMessages
 } from '@/mocks'
 
+/**
+ * Mock toggle and backend base URL configuration.
+ * Defaults to mocks (true) unless explicitly set to 'false' in VITE_USE_MOCKS.
+ */
+export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== 'false'
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api/v1'
+
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Local in-memory mock state during session
