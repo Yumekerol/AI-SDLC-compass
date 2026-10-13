@@ -1,0 +1,142 @@
+"""
+Diagnostic Session Model
+
+Tracks the full lifecycle of a diagnostic session, from repository
+connection through scanning, team context conversation, and report generation.
+
+Maps to the 4-step progress bar in the Figma UI:
+  1. Connect repository
+  2. Review signals
+  3. Team context
+  4. Diagnostic report
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
+
+class SessionStatus(str, Enum):
+    """Diagnostic session lifecycle states."""
+    CREATED = "created"
+    INGESTING = "ingesting"
+    SCANNING = "scanning"
+    SCAN_COMPLETE = "scan_complete"
+    AWAITING_SIGNAL_REVIEW = "awaiting_signal_review"
+    SIGNALS_CONFIRMED = "signals_confirmed"
+    DIAGNOSING = "diagnosing"
+    AWAITING_TEAM_CONTEXT = "awaiting_team_context"
+    SYNTHESIZING = "synthesizing"
+    REPORT_READY = "report_ready"
+    DRAFT_SAVED = "draft_saved"
+    ERROR = "error"
+
+
+class SourceType(str, Enum):
+    """How the repository was provided."""
+    GIT = "git"
+    ZIP = "zip"
+
+
+class ConversationMessage(BaseModel):
+    """A single message in the diagnostic conversation."""
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    role: str  # "supervisor", "agent", "user"
+    agent_domain: str | None = None  # e.g., "requirements_design"
+    agent_label: str | None = None  # e.g., "Requirements & Design"
+    content: str = ""
+    questions: list[ConversationQuestion] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ConversationQuestion(BaseModel):
+    """A targeted question from an agent to the user."""
+    question_id: str = Field(default_factory=lambda: str(uuid4()))
+    text: str
+    priority: str = "medium"  # "high", "medium", "low"
+    tdm_field: str | None = None  # Which TDM field this question aims to fill
+    answered: bool = False
+    answer: str | None = None
+
+
+class AgentStatus(BaseModel):
+    """Current status of a specialist agent."""
+    status: str = "idle"  # "idle", "gathering", "analyzing", "waiting_for_input", "complete"
+    progress: float = 0.0  # 0.0 to 1.0
+
+
+class DiagnosticSession(BaseModel):
+    """
+    The top-level session model tracking the entire diagnostic lifecycle.
+
+    This is the central state object persisted in the database and
+    referenced by all API endpoints.
+    """
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    status: SessionStatus = SessionStatus.CREATED
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Step 1: Repository connection
+    source_type: SourceType = SourceType.GIT
+    git_url: str | None = None
+    access_token: str | None = None  # Optional, for private repos
+    consent_given: bool = False
+    workspace_path: str | None = None  # Local path to the cloned/extracted repo
+
+    # Step 2: Scanner signals (stored as JSON)
+    scanner_output: dict | None = None  # Serialized ScannerOutput
+    signals_confirmed: bool = False
+    signals_confirmed_at: datetime | None = None
+
+    # Step 3: Diagnostic conversation
+    conversation: list[dict] = Field(default_factory=list)  # Serialized ConversationMessages
+    agent_statuses: dict[str, dict] = Field(default_factory=lambda: {
+        "requirements_design": {"status": "idle", "progress": 0.0},
+        "code_refactoring": {"status": "idle", "progress": 0.0},
+        "qa_testing": {"status": "idle", "progress": 0.0},
+        "devops_monitoring": {"status": "idle", "progress": 0.0},
+    })
+    knowledge_gaps: dict | None = None  # Per-agent unresolved gaps
+
+    # Step 4: Report
+    report: dict | None = None  # Serialized report JSON
+    report_generated_at: datetime | None = None
+    pdf_path: str | None = None
+
+    # Error tracking
+    error_message: str | None = None
+
+
+# ─── API Request / Response Models ────────────────────────────────────
+
+class CreateSessionRequest(BaseModel):
+    """Request body for POST /api/v1/sessions."""
+    source_type: SourceType = SourceType.GIT
+    git_url: str | None = None
+    access_token: str | None = None
+    consent_given: bool = False
+
+
+class CreateSessionResponse(BaseModel):
+    """Response body for POST /api/v1/sessions."""
+    session_id: str
+    status: SessionStatus
+    created_at: datetime
+
+
+class SessionStatusResponse(BaseModel):
+    """Response body for GET /api/v1/sessions/{id}."""
+    session_id: str
+    status: SessionStatus
+    source_type: SourceType
+    git_url: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    signals_confirmed: bool = False
+    report_ready: bool = False
+    error_message: str | None = None
