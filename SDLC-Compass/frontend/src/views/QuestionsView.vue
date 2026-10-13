@@ -27,12 +27,11 @@ const currentQuestionIndex = ref<number>(0)
 const chatMessages = ref<DisplayMessage[]>([])
 const topics = ref<TopicProgress[]>([])
 
-// Generic and clearly optional chips as requested (not pretending to come from backend)
+// Generic and clearly optional chips — kept minimal to fit arbitrary questions
 const genericChips = computed<SuggestionChipItem[]>(() => [
   { id: 'c-skip', label: 'Skip this question', value: 'Question skipped by team. Proceed with available repository signals.' },
-  { id: 'c-std', label: 'Standard practice adopted', value: 'We follow standard team practices and documented guidelines for this area.' },
-  { id: 'c-backlog', label: 'Tracked in team backlog', value: 'This is actively tracked as backlog tasks or technical debt in our delivery process.' },
-  { id: 'c-informal', label: 'Ad-hoc / exploratory workflow', value: 'Our team currently manages this informally without standardized tooling.' }
+  { id: 'c-unsure', label: 'Not sure', value: 'The team is not sure about this — rely on available repository evidence.' },
+  { id: 'c-na', label: 'Not applicable', value: 'This area is not applicable to our current project context.' }
 ])
 
 onMounted(async () => {
