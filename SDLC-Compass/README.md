@@ -1,6 +1,7 @@
 # AI-SDLC Compass
 
 AI-SDLC Compass is an automated evaluation and advisory tool for software engineering teams. It analyzes repository architecture and team context across four SDLC domains:
+
 1. **Requirements & design** (`requirements_design`)
 2. **Development** (`code_refactoring`)
 3. **Testing** (`qa_testing`)
@@ -8,7 +9,7 @@ AI-SDLC Compass is an automated evaluation and advisory tool for software engine
 
 ---
 
-## 1. Directory Structure
+## Directory Structure
 
 ```text
 SDLC-Compass/
@@ -21,99 +22,189 @@ SDLC-Compass/
 
 ---
 
-## 2. Running the Backend
+## 1. Running the Backend
 
 ### Prerequisites
-- Python 3.10+ (tested on Python 3.12)
-- Dependencies installed from `backend/requirements.txt`
+
+- Python 3.10 or later (tested on Python 3.12)
+- pip
+
+### Install backend dependencies
+
+Run from the `SDLC-Compass/` directory (not the repo root):
 
 ```powershell
-# From the SDLC-Compass directory:
 cd SDLC-Compass
 pip install -r backend/requirements.txt
+```
 
-# Start FastAPI uvicorn development server:
+> **Note**: `pytest` and `httpx` are used by the test suite but are not listed in
+> `backend/requirements.txt`. Install them separately if needed:
+>
+> ```powershell
+> pip install pytest httpx
+> ```
+
+### Start the FastAPI server
+
+```powershell
+# Still from SDLC-Compass/:
 uvicorn backend.main:app --port 8000 --reload
 ```
 
-The API will be available at `http://localhost:8000`. Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
+The API is available at **`http://localhost:8000`**.
+Interactive docs (Swagger UI) are at **`http://localhost:8000/docs`**.
+
+On first start the backend automatically creates:
+
+- `SDLC-Compass/backend/data/` — SQLite database and workspace files
+- `SDLC-Compass/backend/data/workspaces/` — cloned / extracted repositories
+- `SDLC-Compass/backend/data/reports/` — generated HTML / PDF reports
+
+No manual database setup is required.
+
+### LLM provider
+
+The backend defaults to **Ollama** (`http://localhost:11434`, model `llama3.1`).
+Report synthesis will fail if Ollama is not running or the model is not pulled.
+
+```powershell
+# Pull the default model once (requires Ollama installed):
+ollama pull llama3.1
+```
+
+To switch provider, set environment variables before starting uvicorn (or add them
+to a `.env` file in `SDLC-Compass/`):
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o
+```
 
 ---
 
-## 3. Running Backend Tests
-
-Run the test suite using `pytest`:
+## 2. Running Backend Tests
 
 ```powershell
-# From the SDLC-Compass directory:
-cd SDLC-Compass
+# From SDLC-Compass/:
 pytest tests/test_api.py -v
 ```
 
+All four tests use an in-process `TestClient` — no running server needed.
+
 ---
 
-## 4. Running the Frontend (Vue 3 + Vite)
+## 3. Running the Frontend (Vue 3 + Vite)
 
 ### Prerequisites
-- Node.js 18+ and npm
+
+- Node.js 18 or later
+- npm (comes with Node.js)
+
+### Install frontend dependencies
 
 ```powershell
-# From the SDLC-Compass/frontend directory:
 cd SDLC-Compass/frontend
 npm install
+```
+
+`package-lock.json` is committed; `npm install` reproduces the exact dependency tree.
+
+### Start the development server
+
+```powershell
 npm run dev
 ```
 
-The frontend runs locally at `http://localhost:5173`.
+The frontend is available at **`http://localhost:5173`**.
+
+---
+
+## 4. Environment Variables
+
+All frontend environment variables are stored in `SDLC-Compass/frontend/.env`.
+The file is **gitignored**; copy from `.env.example` if starting fresh:
+
+```powershell
+cp SDLC-Compass/frontend/.env.example SDLC-Compass/frontend/.env
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_USE_MOCKS` | `true` | `true` = offline mock mode; `false` = real backend |
+| `VITE_API_BASE` | `http://localhost:8000/api/v1` | Backend API base URL |
+| `VITE_REPORT_TIMEOUT_MS` | `180000` | Synthesis timeout in ms (default 3 min) |
 
 ---
 
 ## 5. Switching Between Mocks and Real Backend
 
-The frontend supports two operating modes configured in `SDLC-Compass/frontend/.env`:
+### Mode A — Standalone Mock Mode (Default)
 
-### Mode A: Standalone Mock Mode (Default)
-In this mode, the frontend operates completely offline using fixture data and in-memory mock responses:
+Out of the box the frontend uses in-memory fixture data and never contacts the backend:
+
 ```env
+# SDLC-Compass/frontend/.env
 VITE_USE_MOCKS=true
-VITE_API_URL=/api
+VITE_API_BASE=http://localhost:8000/api/v1
 ```
-Run frontend:
+
+Start only the frontend:
+
 ```powershell
 cd SDLC-Compass/frontend
 npm run dev
 ```
 
-### Mode B: Connected Real Backend Mode
-In this mode, the frontend sends live requests to the FastAPI backend at `http://localhost:8000`:
-1. Start the FastAPI backend:
+### Mode B — Connected Real Backend Mode
+
+1. **Start the backend** (in one terminal):
+
    ```powershell
    cd SDLC-Compass
    uvicorn backend.main:app --port 8000
    ```
-2. Update `SDLC-Compass/frontend/.env`:
+
+2. **Update the frontend `.env`**:
+
    ```env
    VITE_USE_MOCKS=false
-   VITE_API_URL=/api
+   VITE_API_BASE=http://localhost:8000/api/v1
    ```
-3. Start the frontend:
+
+3. **Start the frontend** (in a second terminal):
+
    ```powershell
    cd SDLC-Compass/frontend
    npm run dev
    ```
-   *Note: Vite dev server automatically proxies `/api/*` to `http://localhost:8000/*`.*
+
+The frontend calls the backend directly at `http://localhost:8000` — CORS is open
+for all origins in development. There is **no Vite proxy** configured; the full
+`VITE_API_BASE` URL is used for every request.
 
 ---
 
-## 6. PDF Report Export & WeasyPrint System Requirements
+## 6. PDF Report Export & WeasyPrint
 
-The application generates diagnostic reports deliverable via `GET /sessions/{session_id}/report/pdf`.
+The backend generates reports via `GET /sessions/{id}/report/pdf`.
 
-- **On Windows machines without GTK3**:
-  WeasyPrint requires native C runtime libraries (`libgobject-2.0-0.dll`, `libpango-1.0-0.dll`, `libcairo-2.dll`).
-  If these libraries are not present in your system `PATH`, WeasyPrint will report:
-  `OSError: cannot load library 'libgobject-2.0-0': error 0x7e`
-- **Graceful Fallback**:
-  The backend automatically catches this exception and serves the generated consulting report as a styled standalone `.html` deliverable instead of failing.
-- **To enable native PDF rendering on Windows**:
-  Install the GTK3 runtime for Windows (e.g., via MSYS2 `pacman -S mingw-w64-x86_64-gtk3 mingw-w64-x86_64-pango`) or follow the [WeasyPrint Windows installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows).
+| Platform | Behaviour |
+|---|---|
+| Linux / macOS | PDF rendered via WeasyPrint if GTK3/Cairo libraries are available |
+| Windows (no GTK3) | Falls back gracefully to a styled standalone `.html` deliverable |
+
+**Missing system libraries on Windows**: WeasyPrint requires native C runtime DLLs
+(`libgobject-2.0-0.dll`, `libpango-1.0-0.dll`, `libcairo-2.dll`). Without them,
+WeasyPrint logs `OSError: cannot load library 'libgobject-2.0-0': error 0x7e` and
+the backend serves `.html` instead — no crash, no user action needed.
+
+To enable native PDF rendering on Windows, install GTK3 via MSYS2:
+
+```bash
+pacman -S mingw-w64-x86_64-gtk3 mingw-w64-x86_64-pango
+```
+
+Or follow the
+[WeasyPrint Windows installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows).
