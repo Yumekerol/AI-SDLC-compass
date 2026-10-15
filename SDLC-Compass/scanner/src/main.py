@@ -13,6 +13,7 @@ import logging
 from fastapi import FastAPI
 
 from .config import settings
+from .api import api
 
 logging.basicConfig(
     level=logging.INFO if settings.debug else logging.WARNING,
@@ -26,7 +27,7 @@ app = FastAPI(
     description="Scanner prototype for the AI-SDLC-Compass application."
 )
 
-#app.include_router(api)
+app.include_router(api)
 
 async def health_check():
     return {
@@ -37,4 +38,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("scanner.main:app", host=settings.host, port=settings.port, reload=True)
+    uvicorn.run("scanner.src.main:app", host=settings.host, port=settings.port, reload=True)
