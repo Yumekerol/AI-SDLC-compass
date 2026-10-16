@@ -51,3 +51,4 @@ class Settings(BaseSettings):
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
 
 settings = Settings()
+settings.init()

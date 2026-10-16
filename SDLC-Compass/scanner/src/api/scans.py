@@ -6,6 +6,8 @@ import logging
 from fastapi import APIRouter, File, UploadFile, Response, status
 from pydantic import BaseModel
 from typing import Annotated
+from fastapi import HTTPException
+from ..core.git_extract import GitExtractError, clone_repository
 
 from ..models.scanner_output import ScannerOutput
 
@@ -26,5 +28,9 @@ async def start_scan(file: UploadFile, response: Response):
 
 @router.post("/url")
 async def start_scan(url: str, token: str | None = None):
-    return {"repo": url}
+    try:
+        clone = await clone_repository(url, token)
+    except GitExtractError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha}
 
