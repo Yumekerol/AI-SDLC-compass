@@ -12,208 +12,136 @@
 #
 # Notas de utilização
 # - As métricas são sinais, não provas de que uma equipa precisa de AI.
-# - Comparar períodos equivalentes e, quando possível, segmentar por pasta, equipa
-#   (se for conhecida), tipo de ficheiro e fase do SDLC.
-# - Não inferir produtividade individual a partir de commits; commits variam em tamanho
-#   e convenções e podem ser agregados, revertidos ou automatizados.
+# - Respeitar as exclusões de diretórios, ficheiros e tamanhos definidos na configuração.
+# - Distinguir valores observados de hipóteses geradas pela LLM.
+# - Não inferir produtividade individual a partir de commits.
 # - Evitar enviar segredos, credenciais, dados pessoais ou código confidencial à LLM.
-# - Usar apenas metadados e conteúdo que a organização esteja autorizada a processar.
-# - Quando possível, combinar estas métricas com dados de PRs, CI/CD, testes e tickets;
-#   muitos desses dados não existem no Git por si só.
+# - A presença de configurações ou ficheiros não prova que as ferramentas são utilizadas.
+# - Quando possível, combinar estas métricas com dados de PRs, CI/CD, testes e tickets.
 #
 # 01
-Nome: Número de commits por período
-Recolha: Contagem de commits por semana/mês, com datas e branches relevantes.
-Razão: Estabelece o ritmo de alteração do código e ajuda a identificar períodos de atividade.
-Interpretação: Avaliar assistência AI para tarefas repetitivas, documentação ou revisão em áreas de alteração frequente.
-#
+Nome: Ficheiros com maior churn (`file_churn`)
+Recolha: Ranking de ficheiros por número total de linhas adicionadas e removidas
+ao longo de um período. Recolher também o número de commits que alteraram cada ficheiro,
+quando possível.
+Razão: Ficheiros com churn elevado podem ser instáveis, complexos ou centrais para o
+produto, sendo potenciais candidatos a melhorias no processo de desenvolvimento.
+Interpretação: Priorizar geração de testes, revisão assistida por AI, explicação de código
+legado ou análise de impacto das alterações. Churn elevado não significa, por si só,
+que exista dívida técnica.
+
 # 02
-Nome: Frequência de commits por diretório/componente
-Recolha: Contagem de commits que alteram cada diretório, módulo ou componente.
-Razão: Mostra onde se concentra a atividade e quais as áreas com maior procura de manutenção.
-Interpretação: Priorizar pilotos de AI em módulos muito ativos ou com tarefas repetitivas.
-#
+Nome: Frameworks e bibliotecas utilizadas (`frameworks_dependencies`)
+Recolha: Identificação das dependências declaradas e respetivas versões a partir de
+manifestos como package.json, pyproject.toml, requirements.txt, pom.xml, build.gradle,
+go.mod, Cargo.toml e ficheiros equivalentes.
+Razão: O ecossistema tecnológico condiciona as sugestões de código, as ferramentas
+disponíveis e as possibilidades de integração de AI.
+Interpretação: Investigar assistência de código contextualizada, geração de componentes,
+migração entre versões, atualização de dependências e explicação de breaking changes.
+As dependências declaradas não garantem que todas sejam efetivamente utilizadas.
+
 # 03
-Nome: Tamanho das alterações por commit
-Recolha: Linhas adicionadas/removidas e número de ficheiros alterados por commit; guardar mediana e percentis, não só a média.
-Razão: Alterações grandes podem ser difíceis de rever e compreender.
-Interpretação: Investigar geração de resumos, explicações de diff e decomposição de alterações.
-#
+Nome: Número de ficheiros por linguagem (`files_by_language`)
+Recolha: Contagem de ficheiros por linguagem de programação, com base nas extensões
+reconhecidas e excluindo dependências externas, ficheiros gerados e outros elementos
+definidos nas regras de exclusão.
+Razão: Identifica a composição tecnológica do repositório e ajuda a determinar que
+linguagens e ferramentas devem ser consideradas na análise.
+Interpretação: Identificar oportunidades para assistência de código, geração de testes,
+documentação automática e análise estática adaptadas às linguagens predominantes.
+A classificação por extensão é aproximada e pode não identificar todas as linguagens.
+
 # 04
-Nome: Frequência de commits de correção
-Recolha: Contagem de commits cujo assunto contém termos como fix, bug, hotfix, defect ou equivalentes definidos pela equipa.
-Razão: Dá um sinal aproximado da carga de correção; a classificação por texto é imperfeita.
-Interpretação: Avaliar AI para triagem de bugs, sugestão de correções ou geração de testes de regressão.
-#
+Nome: Configuração de CI/CD (`cicd_configuration`)
+Recolha: Deteção de configurações de integração e entrega contínuas, incluindo GitHub
+Actions, GitLab CI, Jenkins, Azure Pipelines, Bitbucket Pipelines e outros sistemas
+equivalentes. Registar os ficheiros e caminhos encontrados.
+Razão: Permite identificar os pontos existentes de automação e possíveis locais de
+integração de funcionalidades de AI no processo de desenvolvimento.
+Interpretação: Investigar AI para explicar falhas de pipelines, resumir erros, sugerir
+correções e apoiar a criação ou manutenção de workflows. A presença de configuração
+não demonstra que os pipelines são executados ou que passam com sucesso.
+
 # 05
-Nome: Frequência de reversões
-Recolha: Contagem de commits revert, revertidos ou com padrões equivalentes, confirmados quando possível pela história Git.
-Razão: Reversões podem indicar alterações problemáticas, incompatibilidades ou requisitos mal compreendidos.
-Interpretação: Explorar revisão assistida por AI, análise de impacto e verificações antes do merge.
-#
+Nome: Inventário e organização de testes (`test_inventory`)
+Recolha: Contagem de ficheiros de teste e identificação aproximada de testes unitários,
+de integração e end-to-end, com base em nomes, diretórios e configurações reconhecidas.
+Registar os caminhos e os tipos de testes identificados.
+Razão: A estrutura de testes fornece contexto sobre as práticas de validação do projeto
+e ajuda a identificar áreas que podem beneficiar de maior apoio.
+Interpretação: Investigar geração de testes, identificação de casos-limite, criação de
+testes de regressão e sugestões de cenários de teste para código alterado.
+A existência de testes não permite concluir qual é a cobertura ou a sua qualidade.
+
 # 06
-Nome: Frequência de commits de refactoring
-Recolha: Commits identificados como refactor, cleanup, restructure ou equivalentes; validar amostras manualmente.
-Razão: Expõe esforço recorrente de melhoria estrutural sem funcionalidade nova.
-Interpretação: Avaliar assistência para refactoring seguro, deteção de duplicação e explicação de código legado.
-#
+Nome: Tamanho das alterações por commit (`commit_churn`)
+Recolha: Para cada commit, recolher a data, a mensagem, o número de ficheiros alterados
+e as linhas adicionadas e removidas. Calcular estatísticas por período, incluindo mediana
+e percentis do tamanho das alterações.
+Razão: Alterações muito grandes podem ser mais difíceis de compreender, validar e rever.
+O histórico também permite observar padrões de evolução do código.
+Interpretação: Investigar resumos automáticos de alterações, explicação de diffs,
+decomposição de alterações grandes e assistência na preparação de revisões de código.
+
 # 07
-Nome: Tempo entre alterações relacionadas
-Recolha: Intervalo entre commits que alteram o mesmo ficheiro ou componente, usando uma janela temporal definida.
-Razão: Alterações repetidas em pouco tempo podem refletir iteração intensa ou retrabalho; não provam retrabalho por si só.
-Interpretação: Investigar sugestões AI, análise de impacto e melhoria da qualidade da primeira alteração.
-#
+Nome: Frequência de correções e reversões (`fixes_and_reverts`)
+Recolha: Contagem de commits cujas mensagens indiquem correções, como fix, bug, hotfix
+ou defect, e identificação de commits de reversão, como revert. Registar as mensagens,
+datas e evidências usadas na classificação.
+Razão: Pode fornecer sinais aproximados sobre a atividade de correção e a ocorrência
+de alterações que precisaram de ser revertidas.
+Interpretação: Investigar AI para triagem de bugs, sugestão de correções, geração de testes
+de regressão e análise de impacto antes da integração. A classificação por mensagens
+é imperfeita e não identifica necessariamente todos os bugs ou reversões.
+
 # 08
-Nome: Ficheiros com maior churn
-Recolha: Ranking de ficheiros por total de linhas adicionadas e removidas num período.
-Razão: Ficheiros com churn elevado podem ser instáveis, complexos ou centrais para o produto.
-Interpretação: Priorizar testes, documentação contextual, revisão assistida ou análise de risco.
-#
+Nome: Frequência de alterações por diretório/componente (`component_activity`)
+Recolha: Número de commits, ficheiros alterados e linhas adicionadas/removidas por
+diretório ou componente, num período definido. Quando possível, considerar também
+a distribuição temporal da atividade.
+Razão: Permite identificar as áreas do repositório que concentram mais alterações e
+compreender onde se encontra a maior parte da atividade de manutenção.
+Interpretação: Priorizar pilotos de AI em componentes com elevada atividade, explorar
+assistência contextualizada por módulo e identificar oportunidades de documentação,
+testes ou análise de impacto.
+
 # 09
-Nome: Concentração de alterações em ficheiros críticos
-Recolha: Frequência de alterações em ficheiros de configuração, autenticação, autorização, pagamentos, deployment ou outros caminhos definidos como críticos.
-Razão: Alterações nestas áreas podem exigir validação reforçada.
-Interpretação: Avaliar revisão AI orientada a segurança e políticas, sempre com aprovação humana.
-#
+Nome: Inventário de documentação (`documentation_inventory`)
+Recolha: Identificação e contagem de ficheiros de documentação, incluindo README,
+diretórios docs, ADRs, runbooks, guias de instalação e onboarding e changelogs.
+Quando possível, recolher também a frequência de alterações a esses ficheiros.
+Razão: A documentação fornece contexto sobre a arquitetura, os processos e a utilização
+do projeto. A sua distribuição e evolução ajudam a identificar áreas a analisar.
+Interpretação: Investigar geração ou atualização de documentação, criação de notas de
+versão, explicação de arquitetura e apoio ao onboarding. A ausência de documentação
+detetada não prova que não exista documentação noutro sistema.
+
 # 10
-Nome: Linguagens de programação utilizadas
-Recolha: Linguagens e proporção aproximada de ficheiros/linhas por linguagem, excluindo dependências vendorizadas e artefactos gerados.
-Razão: Identifica os ecossistemas técnicos e condiciona ferramentas e modelos adequados.
-Interpretação: Escolher assistentes, analisadores estáticos e modelos com suporte apropriado às linguagens presentes.
-#
-# 11
-Nome: Frameworks e bibliotecas detetadas
-Recolha: Dependências e versões a partir de package.json, pom.xml, build.gradle, requirements.txt, pyproject.toml, go.mod, Cargo.toml e ficheiros equivalentes.
-Razão: O contexto das frameworks é essencial para sugestões de código compatíveis.
-Interpretação: Avaliar AI para scaffolding, migrações, atualização de dependências e assistência contextual por framework.
-#
-# 12
-Nome: Gestores de dependências e ficheiros de lock
-Recolha: Presença e alterações em package-lock.json, pnpm-lock.yaml, yarn.lock, poetry.lock, uv.lock, Cargo.lock e equivalentes.
-Razão: Mostra como as dependências são geridas e quando mudam.
-Interpretação: Explorar resumos de atualizações, deteção de breaking changes e assistência a upgrades.
-#
-# 13
-Nome: Frequência de atualização de dependências
-Recolha: Commits que alteram manifestos/lockfiles; identificar atualizações diretas e automatizadas quando possível.
-Razão: Atualizações frequentes podem exigir avaliação de compatibilidade e risco.
-Interpretação: Avaliar resumos AI de changelogs, análise de impacto e propostas de migração.
-#
-# 14
-Nome: Cobertura de testes representada no repositório
-Recolha: Presença e distribuição de testes unitários, integração, end-to-end e respetivas configurações; não confundir presença de testes com cobertura percentual.
-Razão: Revela que tipos de testes existem e onde parecem faltar.
-Interpretação: Identificar oportunidades para gerar testes, criar casos-limite ou explicar estratégias de teste.
-#
-# 15
-Nome: Alterações a testes versus alterações de produção
-Recolha: Relação, por commit ou período, entre alterações em ficheiros de teste e alterações em código de produção.
-Razão: Ajuda a verificar se as mudanças de código são acompanhadas por testes; a relação não mede qualidade.
-Interpretação: Sugerir testes relevantes quando código de produção muda sem alterações de teste associadas.
-#
-# 16
-Nome: Testes adicionados ou modificados após correções
-Recolha: Identificar correções seguidas de alterações em testes relacionados, por mensagem, ficheiros e proximidade temporal.
-Razão: Indica se os bugs corrigidos estão a ser protegidos contra regressões.
-Interpretação: Assistir na criação de testes de regressão e em sugestões de cenários em falta.
-#
-# 17
-Nome: Configuração de CI
-Recolha: Deteção de GitHub Actions, GitLab CI, Jenkinsfiles, Azure Pipelines e outras definições de integração contínua versionadas.
-Razão: Identifica verificações automatizadas existentes e pontos de integração possíveis.
-Interpretação: Propor AI para sumarizar falhas, classificar erros de pipeline ou explicar logs, se estes estiverem disponíveis.
-#
-# 18
-Nome: Configuração de build e scripts de desenvolvimento
-Recolha: Scripts de build, lint, format, test, type-check e comandos definidos em Makefile ou ferramentas equivalentes.
-Razão: Mostra tarefas repetíveis que podem ser automatizadas ou invocadas por agentes com controlos.
-Interpretação: Identificar fluxos elegíveis para automação assistida por AI, mantendo validação e permissões limitadas.
-#
-# 19
-Nome: Ferramentas de análise estática e qualidade
-Recolha: Configuração de linters, formatters, type checkers, SAST e análise de qualidade, como ESLint, Ruff, mypy, Sonar ou equivalentes.
-Razão: Determina que verificações determinísticas já existem e onde AI pode complementá-las, não substituí-las.
-Interpretação: Integrar explicações de findings, priorização ou correções propostas com validação automática.
-#
-# 20
-Nome: Histórico de documentação
-Recolha: Número e frequência de alterações em README, docs, ADRs, runbooks, guias de onboarding e documentação inline.
-Razão: Documentação pouco atualizada ou alterada em simultâneo com código pode revelar fricção de manutenção.
-Interpretação: Avaliar geração de rascunhos de documentação, atualização de exemplos e deteção de documentação potencialmente desatualizada.
-#
-# 21
-Nome: Relação entre alterações de código e documentação
-Recolha: Identificar commits com código alterado sem documentação associada, usando regras por tipo de alteração.
-Razão: Ajuda a localizar alterações que talvez precisem de explicação; nem toda alteração exige documentação.
-Interpretação: Sugerir atualizações de docs ou notas de versão quando mudanças relevantes são detetadas.
-#
-# 22
-Nome: Padrões de mensagens de commit
-Recolha: Distribuição de convenções como Conventional Commits, referências a tickets, prefixos de bugfix/feature e mensagens pouco descritivas.
-Razão: Mensagens consistentes facilitam contexto e rastreabilidade; mensagens pobres dificultam análise automatizada.
-Interpretação: Avaliar geração de mensagens de commit, classificação de alterações e ligação a requisitos.
-#
-# 23
-Nome: Estrutura e tamanho dos módulos
-Recolha: Número de módulos/pastas, ficheiros por módulo, dependências entre módulos quando inferíveis e ficheiros excessivamente grandes.
-Razão: Contextualiza a arquitetura e identifica componentes difíceis de navegar.
-Interpretação: Explorar pesquisa semântica sobre o código, mapas de arquitetura e explicações de dependências.
-#
-# 24
-Nome: Código duplicado ou padrões repetidos
-Recolha: Resultados de ferramentas de deteção de duplicação, ou padrões repetidos identificados com análise estática; não inferir apenas pelo número de commits.
-Razão: Duplicação pode aumentar o esforço de manutenção e criar alterações inconsistentes.
-Interpretação: Avaliar sugestões de consolidação, refactoring ou geração de componentes reutilizáveis.
-#
-# 25
-Nome: Sinais de dívida técnica
-Recolha: Contagem de TODO, FIXME, HACK, deprecated e supressões de análise estática, com localização e histórico.
-Razão: Dá um inventário inicial de trabalho adiado e zonas que exigem atenção.
-Interpretação: Usar AI para agrupar itens, sugerir prioridade e propor passos de resolução.
-#
-# 26
-Nome: Alterações de segurança e permissões
-Recolha: Alterações em dependências de segurança, ficheiros de permissões, autenticação, autorização, secrets scanning e configurações de segurança.
-Razão: Identifica superfícies sensíveis onde erros têm impacto elevado.
-Interpretação: Avaliar revisão assistida por AI e explicações de alertas, complementadas por scanners determinísticos e revisão humana.
-#
-# 27
-Nome: Configuração de infraestrutura como código
-Recolha: Presença e alterações em Terraform, CloudFormation, Kubernetes manifests, Helm, Dockerfiles e configuração de deployment.
-Razão: Revela a extensão de operações e infraestrutura geridas no repositório.
-Interpretação: Explorar revisão de alterações de infraestrutura, geração de manifests e explicação de diferenças entre ambientes.
-#
-# 28
-Nome: Frequência de alterações em configuração e ambiente
-Recolha: Alterações a ficheiros de configuração, variáveis de ambiente de exemplo e configuração por ambiente; nunca recolher valores secretos.
-Razão: Alterações de configuração podem provocar falhas difíceis de diagnosticar.
-Interpretação: Avaliar deteção de inconsistências, validação de schema e explicação de impacto.
-#
-# 29
-Nome: Padrões de releases e versionamento
-Recolha: Tags, releases refletidas no Git, alterações de versão e ficheiros de changelog.
-Razão: Ajuda a compreender cadência de entrega e como as alterações são agrupadas.
-Interpretação: Avaliar geração de release notes, resumos de alterações e identificação de mudanças incompatíveis.
-#
-# 30
-Nome: Autoria e distribuição de alterações por área
-Recolha: Número de contribuidores distintos e distribuição de commits por componente, agregada por equipa ou período quando apropriado.
-Razão: Ajuda a identificar áreas com conhecimento concentrado ou dependência de poucas pessoas; não deve ser usado como medida individual de desempenho.
-Interpretação: Considerar documentação assistida, explicações de código e recuperação de conhecimento para reduzir dependência de conhecimento tácito.
+Nome: Sinais de dívida técnica (`technical_debt_markers`)
+Recolha: Contagem de ocorrências de TODO, FIXME, HACK, XXX e marcadores equivalentes,
+registando o ficheiro e a linha onde aparecem. Não é necessário enviar o conteúdo
+completo das linhas para obter a contagem inicial.
+Razão: Estes marcadores podem revelar trabalho adiado, limitações conhecidas ou áreas
+que merecem investigação adicional.
+Interpretação: Investigar AI para agrupar itens semelhantes, explicar o contexto,
+sugerir prioridades e propor passos de resolução. Os marcadores não representam
+uma medida completa da dívida técnica.
+
 #
 # Limites dos dados Git
 # O Git, isoladamente, normalmente não revela com fiabilidade:
-# - duração real de revisão de pull requests, comentários e número de rondas de revisão;
-# - tempo de execução de CI, falhas de pipeline e duração de builds;
-# - cobertura percentual de testes, resultados de produção, incidentes ou MTTR;
-# - requisitos, critérios de aceitação, esforço planeado ou satisfação dos developers.
-# Para estes sinais, integrar fontes autorizadas como plataforma de PRs, CI/CD, issue tracker,
-# ferramentas de testes e incidentes. A LLM deve indicar a fonte e a confiança de cada inferência.
+# - duração real das revisões de pull requests ou número de rondas de revisão;
+# - execução, duração e resultados dos pipelines de CI/CD;
+# - cobertura percentual e resultados efetivos dos testes;
+# - incidentes de produção, MTTR, requisitos ou satisfação dos developers.
+# Para estes sinais, integrar fontes adicionais autorizadas quando disponíveis.
 #
 # Instrução sugerida para a LLM
-# "Analisa as métricas e evidências fornecidas. Para cada oportunidade potencial de AI no SDLC,
-# indica: fase do SDLC, problema observado, métrica que sustenta a hipótese, intervenção AI
-# proposta, benefício esperado, riscos, dependências, esforço de implementação, forma de medir
-# o resultado e nível de confiança. Distingue factos observados de hipóteses. Não concluas que
-# existe um problema apenas porque uma métrica tem um valor elevado; pede contexto quando
-# necessário e recomenda pilotos pequenos com métricas de baseline e avaliação humana."
+# "Analisa as métricas e evidências fornecidas. Para cada oportunidade potencial de AI
+# no SDLC, indica: fase do SDLC, problema observado, métrica que sustenta a hipótese,
+# intervenção AI proposta, benefício esperado, riscos, dependências, esforço de
+# implementação, forma de medir o resultado e nível de confiança.
+# Distingue factos observados de hipóteses. Não concluas que existe um problema apenas
+# porque uma métrica tem um valor elevado. Recomenda pilotos pequenos com métricas
+# de baseline e avaliação humana."
