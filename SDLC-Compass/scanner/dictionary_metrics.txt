@@ -1,1055 +1,219 @@
-==============================================================================
-DICIONÁRIO DE MÉTRICAS v2 - AI-SDLC Compass (scanner de repositório)
-==============================================================================
-
-OBJETIVO
-  Definir as métricas que o scanner extrai de um repositório git para
-  alimentar a LLM que escreve o relatório. Cada métrica foi escolhida por
-  três critérios:
-
-    1. Extraível só com git e análise estática (nada é executado, sem rede).
-    2. Fiável o suficiente num repositório pequeno (até ~50 ficheiros).
-    3. Sustenta uma decisão concreta sobre ONDE a IA pode ajudar no SDLC.
-       Exemplo: nenhum teste encontrado -> geração de testes com IA.
-
-  O scanner só emite factos. A ligação "métrica -> oportunidade de IA" está
-  documentada aqui (campo "Porquê") e no Apêndice A, e é usada no prompt da
-  LLM. Não faz parte do scanner, que continua determinístico.
-
-  Este ficheiro serve também de glossário para a LLM: o "método" de cada
-  métrica é estático e vive aqui, por isso não precisa de ser repetido no
-  JSON de valores.
-
-COMO LER CADA ENTRADA
-  chave.no.json
-    O que é   : definição da métrica
-    Extração  : como se obtém (comando ou ferramenta)
-    Porquê    : decisão de IA que a métrica sustenta
-    Fase/Método/Prio : fase SDLC / exact ou heuristic / P1, P2 ou P3
-
-  Fases SDLC (as do relatório): requirements, design, development, testing,
-  deployment, monitoring.
-
-  Método
-    exact     : contagem ou existência de ficheiro; reproduzível.
-    heuristic : depende de convenções, keywords ou aproximações. A LLM deve
-                usar linguagem de indício ("sugere"), nunca de certeza.
-
-  Prioridade
-    P1 : essencial para o PoC
-    P2 : recomendada
-    P3 : opcional / se houver tempo
-
-==============================================================================
-REGRAS GERAIS
-==============================================================================
-
-  1. Só factos, nunca conclusões nem recomendações.
-  2. Ausência não é inexistência. Cada bloco regista o que foi procurado
-     (checked) e não encontrado (not_found). A LLM deve escrever "não
-     encontrado no repositório", nunca "não existe". Testes, CI ou docs
-     podem viver noutro repositório.
-  3. Método é estático (definido aqui). Confiança é dinâmica: as métricas
-     baseadas em histórico herdam data_quality.history_confidence.
-  4. Determinismo: versões das ferramentas fixas e registadas no meta;
-     listas ordenadas de forma estável; resultado ligado ao SHA do HEAD;
-     sem rede; nenhum código do repo é executado.
-  5. ref_date é um parâmetro opcional (ex.: data da entrevista). Por
-     omissão é a data do último commit. Nunca se usa a data do sistema.
-  6. evidence = paths, SHAs, nomes de funções. Nunca código-fonte nem
-     valores de segredos.
-  7. Só agregados de equipa. Nunca métricas por pessoa.
-  8. Sem scores compostos ("AI readiness 73/100"). Usam-se factos e níveis
-     ordinais com a regra declarada (ver derived.guardrails).
-  9. Se um módulo falhar, o resto continua e collector_status regista-o.
-
-==============================================================================
-LIMIARES POR OMISSÃO (configuráveis em thresholds.yaml e declarados no meta)
-==============================================================================
-
-  complexidade ciclomática alta ........ CCN >= 10
-  função longa ......................... > 50 linhas (NLOC)
-  muitos parâmetros .................... > 5
-  ficheiro grande ...................... > 500 e > 1000 linhas
-  commit grande ........................ > 500 linhas alteradas
-  mensagem genérica .................... < 10 caracteres ou na lista
-                                         (wip, fix, update, misc, test, .)
-  hotspot .............................. churn e complexidade no percentil
-                                         >= p75 (adequado a ~50 ficheiros)
-  janela de churn ...................... últimos 12 meses
-  ficheiro reincidente em correções .... >= 3 commits de correção
-  dono único (ficheiro) ................ >= 80% das linhas
-  dono único (hotspot) ................. >= 85% das linhas
-  ficheiro parado ...................... > 365 dias sem alteração
-  autor ativo .......................... commit nos últimos 90 dias
-  change coupling ...................... >= 5 co-alterações e >= 60% das
-                                         alterações do ficheiro menos mexido;
-                                         ignora commits com > 20 ficheiros
-  history_confidence ................... low: < 30 commits OU < 4 semanas OU
-                                         shallow. high: >= 100 commits E
-                                         >= 12 semanas. medium: restantes.
-  typing_level (Python) ................ low < 20%, partial 20-80%, high > 80%
-
-==============================================================================
-FERRAMENTAS NECESSÁRIAS
-==============================================================================
-
-  Obrigatórias : git, scc (ou tokei), lizard, PyYAML, pathspec, módulo ast
-                 do Python (docstrings e tipagem em Python)
-  Recomendada  : tree-sitter (docstrings, tipagem e tratamento de erros em
-                 JavaScript e Java)
-  Opcionais    : jscpd (duplicação), gitleaks (segredos; fallback: conjunto
-                 de regex offline)
-
-==============================================================================
-DICIONÁRIO
-==============================================================================
-
-------------------------------------------------------------------------------
-A. META
-------------------------------------------------------------------------------
-
-meta
-  O que é   : identificação do scan: schema_version, repo_head (SHA),
-              ref_date, tool_versions e thresholds_hash.
-  Extração  : git rev-parse HEAD; git log -1 --format=%aI; versões das
-              ferramentas; hash do thresholds.yaml.
-  Porquê    : garante reprodutibilidade (mesmo repo + mesma config = mesmo
-              output) e permite citar a versão exata que foi analisada.
-  Fase/Método/Prio : todas / exact / P1
-
-------------------------------------------------------------------------------
-B. DATA_QUALITY (quanto se pode confiar nos dados)
-------------------------------------------------------------------------------
-
-data_quality.commits_total
-  O que é   : número de commits no histórico analisado (bruto, inclui bots).
-  Extração  : git rev-list --count HEAD
-  Porquê    : base de confiança de todas as métricas de histórico.
-  Fase/Método/Prio : todas / exact / P1
-
-data_quality.span_weeks
-  O que é   : semanas entre o primeiro e o último commit.
-  Extração  : git log --format=%aI (primeiro e último).
-  Porquê    : histórico curto torna médias e tendências pouco fiáveis.
-  Fase/Método/Prio : todas / exact / P1
-
-data_quality.days_since_last_commit
-  O que é   : dias entre o último commit e a ref_date fornecida.
-  Extração  : só calculado se ref_date for passada por parâmetro; caso
-              contrário é null.
-  Porquê    : repo parado pode não ser o repositório ativo da equipa.
-              Alimenta a observação dormant_repo.
-  Fase/Método/Prio : todas / exact / P2
-
-data_quality.is_shallow
-  O que é   : se o clone tem histórico truncado.
-  Extração  : git rev-parse --is-shallow-repository
-  Porquê    : um shallow clone invalida quase todas as métricas de histórico.
-  Fase/Método/Prio : todas / exact / P1
-
-data_quality.squash_suspected
-  O que é   : suspeita de merges feitos por squash.
-  Extração  : >= 50% dos assuntos de commit terminam em "(#N)" e merge
-              commits < 2% do total.
-  Porquê    : squash destrói granularidade; tamanho dos commits, bus factor
-              e commits diretos na main ficam distorcidos.
-  Fase/Método/Prio : todas / heuristic / P2
-
-data_quality.bot_commit_share
-  O que é   : % de commits feitos por bots (dependabot, renovate,
-              github-actions, [bot]).
-  Extração  : nome e email do autor (após .mailmap).
-  Porquê    : bots não são equipa; os agregados humanos excluem-nos.
-  Fase/Método/Prio : todas / heuristic / P2
-
-data_quality.history_confidence
-  O que é   : nível derivado (low / medium / high) de confiança no histórico.
-  Extração  : regra dos limiares (commits, semanas, shallow).
-  Porquê    : com low, a LLM não pode afirmar tendências nem métricas de
-              histórico sem confirmação da equipa.
-  Fase/Método/Prio : todas / exact / P1
-
-data_quality.file_inventory
-  O que é   : ficheiros analisados e ignorados por categoria (vendor,
-              node_modules, gerados, minificados, lockfiles, binários,
-              > 1 MB).
-  Extração  : git ls-files + pathspec + .gitattributes (linguist-generated,
-              linguist-vendored) + heurística de minificados.
-  Porquê    : evita que lixo distorça LOC, linguagens e complexidade.
-  Fase/Método/Prio : todas / exact / P1
-
-data_quality.collector_status
-  O que é   : estado (ok / partial / failed / unavailable) de cada módulo
-              do scanner, com razão curta.
-  Extração  : registado pelo próprio scanner.
-  Porquê    : a LLM não pode concluir "não há testes" se o módulo de testes
-              falhou.
-  Fase/Método/Prio : todas / exact / P1
-
-------------------------------------------------------------------------------
-C. PROJECT_PROFILE (o que o repositório é de facto)
-------------------------------------------------------------------------------
-
-project_profile.lang_share
-  O que é   : % de linhas de código (sem comentários nem linhas em branco)
-              por linguagem, sem vendor, gerados, minificados e lockfiles.
-  Extração  : scc --by-file --format json (ou tokei), sobre os ficheiros de
-              file_inventory.
-  Porquê    : define em que linguagens a IA tem de trabalhar e apanha
-              divergências entre o declarado e o real (ex.: a equipa diz
-              JavaScript e o código é Python).
-  Fase/Método/Prio : development / exact / P1
-
-project_profile.lang_share_by_folder
-  O que é   : a mesma distribuição por pasta de topo.
-  Extração  : agregação do output do scc por diretório.
-  Porquê    : revela repos mistos (frontend/ + backend/) e onde vive cada
-              linguagem.
-  Fase/Método/Prio : design / exact / P2
-
-project_profile.language_role
-  O que é   : papel de cada linguagem: aplicação ou apenas tooling de
-              build/scripts (ex.: build_tooling_only).
-  Extração  : JS só em devDependencies/scripts de build, pastas
-              scripts/tools/build e poucos LOC.
-  Porquê    : explica a divergência de stack sem a interpretar.
-  Fase/Método/Prio : development / heuristic / P2
-
-project_profile.manifests_and_lockfiles
-  O que é   : manifestos (package.json, requirements*.txt, pyproject.toml,
-              Pipfile, pom.xml, build.gradle) e lockfiles presentes.
-  Extração  : git ls-files.
-  Porquê    : mostra o ecossistema real e a reprodutibilidade das builds.
-  Fase/Método/Prio : development / exact / P2
-
-project_profile.frameworks
-  O que é   : frameworks, ORM e base de dados inferidos das dependências
-              declaradas (django, flask, fastapi, express, react,
-              spring-boot, sqlalchemy, mongoose, postgres...).
-  Extração  : parse dos manifestos + catálogo fixo de nomes normalizados.
-  Porquê    : determina o que a IA deve gerar: testes de endpoints numa API,
-              validação de dados num pipeline, componentes num frontend.
-  Fase/Método/Prio : development / exact / P1
-
-project_profile.project_type
-  O que é   : api_backend | frontend | data_ml | library | cli | infra | mixed
-  Extração  : regras sobre frameworks, pastas e ficheiros (rotas, notebooks,
-              entry points, ficheiros só YAML/HCL).
-  Porquê    : a mesma oportunidade de IA muda de forma conforme o tipo.
-  Fase/Método/Prio : design / heuristic / P2
-
-project_profile.runtimes
-  O que é   : versão de runtime e se está fora de suporte (eol).
-  Extração  : .python-version, .nvmrc, engines do package.json, FROM do
-              Dockerfile, setup-python/setup-node nos workflows, java.version
-              no pom; comparação com tabela EOL offline, relativa à ref_date.
-  Porquê    : runtime fora de suporte -> upgrades e migrações assistidos.
-  Fase/Método/Prio : deployment / exact / P3
-
-project_profile.repo_size
-  O que é   : nº de ficheiros, LOC e tokens aproximados (bytes / 4).
-  Extração  : scc + tamanho em bytes dos ficheiros analisados.
-  Porquê    : define se uma ferramenta de IA vê o repo inteiro ou só por
-              módulos (alimenta guardrails.repo_fits_in_context).
-  Fase/Método/Prio : development / exact / P2
-
-------------------------------------------------------------------------------
-D. TESTING (sem executar nada)
-------------------------------------------------------------------------------
-
-testing.test_inventory
-  O que é   : {files, functions} = nº de ficheiros e de funções de teste.
-  Extração  : ficheiros por convenção (test_*.py, *_test.py, *.test.js,
-              *.spec.js, *Test.java, pastas tests/, test/, __tests__/,
-              src/test/); funções por padrão (def test_, @Test, it(, test( ).
-  Porquê    : sinal base. Zero testes encontrados -> hipótese "geração de
-              testes com IA" (Apêndice A, A1). Atenção: "não encontrados"
-              pode significar testes noutro repositório.
-  Fase/Método/Prio : testing / heuristic / P1
-
-testing.test_frameworks
-  O que é   : frameworks de teste detetados (pytest, unittest, jest, mocha,
-              vitest, junit, testng).
-  Extração  : dependências nos manifestos + imports nos ficheiros de teste.
-  Porquê    : a IA deve gerar testes no framework que a equipa já usa.
-  Fase/Método/Prio : testing / exact / P1
-
-testing.test_code_ratio
-  O que é   : LOC de testes a dividir por LOC de código, global e por pasta
-              de topo.
-  Extração  : scc sobre ficheiros classificados como teste vs. código.
-  Porquê    : separa "sem testes" de "poucos testes".
-  Fase/Método/Prio : testing / exact / P1
-
-testing.test_types
-  O que é   : tipos de teste presentes (unit, integration, e2e).
-  Extração  : pastas (unit/, integration/, e2e/) e frameworks (cypress,
-              playwright, selenium, supertest, testcontainers).
-  Porquê    : lacunas de integração e e2e são candidatas a geração de
-              cenários de teste com IA.
-  Fase/Método/Prio : testing / heuristic / P2
-
-testing.untested_modules
-  O que é   : módulos de código sem teste associado, ordenados por
-              complexidade.
-  Extração  : convenção de nomes (foo.py <-> test_foo.py; foo.js <->
-              foo.test.js; Foo.java <-> FooTest.java; espelho de pastas).
-  Porquê    : mostra onde falta rede de segurança; alimenta complex_untested
-              e bug_magnets. O relatório deve assumir que o mapeamento é
-              heurístico.
-  Fase/Método/Prio : testing / heuristic / P1
-
-testing.coverage_config
-  O que é   : se existe configuração de cobertura ou relatórios commitados.
-  Extração  : .coveragerc, [tool.coverage] no pyproject, coverageThreshold
-              no jest, jacoco no pom/gradle, coverage.xml, lcov.info.
-  Porquê    : sem medição de cobertura, não há como avaliar o ganho de testes
-              gerados por IA.
-  Fase/Método/Prio : testing / exact / P2
-
-testing.test_commit_share
-  O que é   : % de commits que alteram código-fonte e também ficheiros de
-              teste.
-  Extração  : git log --name-only + classificação de paths.
-  Porquê    : distingue "existem testes" de "testar é hábito". Valor baixo
-              -> IA para gerar testes junto de cada alteração.
-  Fase/Método/Prio : testing / heuristic / P2
-
-------------------------------------------------------------------------------
-E. CODE_HEALTH (qualidade do código atual)
-------------------------------------------------------------------------------
-
-code_health.cyclomatic_complexity
-  O que é   : complexidade ciclomática por função: p50, p90, máximo e top-10
-              (ficheiro:função:CCN).
-  Extração  : lizard --csv -l python -l javascript -l java
-  Porquê    : mostra onde o código é difícil de manter e testar; candidatos
-              a refactoring e testes assistidos.
-  Fase/Método/Prio : development / exact / P1
-
-code_health.function_smells
-  O que é   : funções longas (> 50 NLOC) e com muitos parâmetros (> 5):
-              contagens e top-5.
-  Extração  : campos length e PARAM do output do lizard.
-  Porquê    : candidatos a extração de funções e refactoring assistido.
-  Fase/Método/Prio : development / exact / P2
-
-code_health.large_files
-  O que é   : nº de ficheiros com mais de 500 e de 1000 linhas.
-  Extração  : scc --by-file.
-  Porquê    : alvos de modularização e limite prático para ferramentas de
-              IA com contexto finito.
-  Fase/Método/Prio : development / exact / P2
-
-code_health.duplication_and_boilerplate
-  O que é   : duplication_pct (% de código duplicado) e similar_file_groups
-              (grupos de ficheiros com o mesmo padrão de nome e estrutura
-              parecida: controllers, DTOs, rotas CRUD).
-  Extração  : jscpd --reporters json; grupos por padrão de nome + tamanho e
-              hash estrutural (aproximado).
-  Porquê    : trabalho repetitivo é o caso mais direto de IA (geração de
-              boilerplate, consolidação de duplicados).
-  Fase/Método/Prio : development / exact (%) e heuristic (grupos) / P2
-
-code_health.docstring_coverage
-  O que é   : % de funções e classes públicas com docstring, JSDoc ou
-              Javadoc.
-  Extração  : Python: módulo ast; JavaScript e Java: tree-sitter.
-  Porquê    : valor baixo -> geração e manutenção de documentação com IA, uma
-              das aplicações mais maduras.
-  Fase/Método/Prio : development / heuristic / P1
-
-code_health.typing_level
-  O que é   : Python: % de funções com anotações de tipo; JavaScript: peso de
-              .ts/.tsx e tsconfig strict; Java: n/a (tipagem estática).
-              Inclui level derivado (low / partial / high).
-  Extração  : ast (Python); extensões e tsconfig.json (JS).
-  Porquê    : a tipagem é rede de segurança para código gerado por IA.
-              Nível baixo -> introduzir tipos antes de refactoring grande.
-  Fase/Método/Prio : development / heuristic / P2
-
-code_health.tech_debt_markers
-  O que é   : contagem de TODO/FIXME/HACK/XXX e ficheiros com mais marcadores.
-  Extração  : grep nos ficheiros analisados.
-  Porquê    : dívida declarada pela própria equipa -> backlog natural para
-              triagem e resolução assistidas.
-  Fase/Método/Prio : development / exact / P2
-
-code_health.weak_error_handling
-  O que é   : except: nu ou except Exception: pass (Python); catch vazio
-              (JavaScript e Java).
-  Extração  : tree-sitter ou regex sobre os padrões.
-  Porquê    : falhas silenciosas dificultam debugging; revisão assistida do
-              tratamento de erros e instrumentação.
-  Fase/Método/Prio : development / exact (padrões) / P2
-
-------------------------------------------------------------------------------
-F. DEVELOPMENT_PROCESS (hábitos de trabalho, vistos pelo histórico git)
-------------------------------------------------------------------------------
-
-development_process.churn_by_file
-  O que é   : por ficheiro, nº de commits e linhas adicionadas/apagadas na
-              janela de churn; top-10.
-  Extração  : git log --no-merges --numstat --format='@@%H|%aI|%aN|%s'
-              (uma só passagem, parse em Python).
-  Porquê    : base dos hotspots. Churn alto sozinho não é mau (ficheiros de
-              configuração e rotas mudam muito); cruza-se sempre com
-              complexidade.
-  Fase/Método/Prio : development / exact / P1
-
-development_process.commit_size
-  O que é   : p50 e p90 de linhas e de ficheiros por commit; % de commits
-              com mais de 500 linhas.
-  Extração  : numstat da mesma passagem.
-  Porquê    : commits grandes são difíceis de rever -> pré-revisão e
-              sumarização de alterações com IA.
-  Fase/Método/Prio : development / exact / P1
-
-development_process.commit_message_quality
-  O que é   : comprimento mediano, % de mensagens genéricas, % que segue
-              Conventional Commits.
-  Extração  : regex sobre os assuntos dos commits.
-  Porquê    : mensagens fracas -> geração de mensagens de commit e changelogs
-              com IA.
-  Fase/Método/Prio : development / heuristic / P2
-
-development_process.traceability
-  O que é   : % de commits com referência a issue (#123 ou PROJ-123) e
-              prefixo dominante.
-  Extração  : regex #\d+ e [A-Z][A-Z0-9]+-\d+ nos assuntos.
-  Porquê    : pouca rastreabilidade requisitos <-> código -> IA para ligar
-              commits e PRs a requisitos. O prefixo (PROJ- sugere Jira, #
-              sugere GitHub) cruza com a ferramenta que a equipa declarar.
-  Fase/Método/Prio : requirements / heuristic / P1
-
-development_process.merge_and_branching
-  O que é   : rácio merges/commits; prefixos de branch (feature/, hotfix/,
-              release/); % de commits diretos na branch principal.
-  Extração  : git log --merges; prefixos lidos dos assuntos de merge e de
-              git branch -r; git log --first-parent --no-merges para os
-              commits diretos.
-  Porquê    : contrasta a metodologia declarada (Scrum, Kanban, Waterfall)
-              com o observado. Sem merges nem PRs -> hipótese de revisão
-              de código com IA. Cuidado com squash (ver squash_suspected).
-  Fase/Método/Prio : development / heuristic / P1
-
-development_process.change_coupling
-  O que é   : pares de ficheiros que mudam juntos com frequência.
-  Extração  : co-ocorrência no git log --name-only (limiares acima).
-  Porquê    : dependências escondidas -> análise de impacto e documentação
-              de arquitetura assistidas.
-  Fase/Método/Prio : design / heuristic / P3
-
-------------------------------------------------------------------------------
-G. STABILITY (indícios de instabilidade; nunca "taxa de defeitos")
-------------------------------------------------------------------------------
-
-stability.fix_commit_ratio
-  O que é   : % de commits cujo assunto contém fix, bug, hotfix, patch ou
-              regress.
-  Extração  : regex case-insensitive sobre os assuntos.
-  Porquê    : indicador fraco, mas útil. Valor alto -> revisão estática
-              assistida e testes dirigidos.
-  Fase/Método/Prio : testing / heuristic / P1
-
-stability.repeat_fix_files
-  O que é   : ficheiros tocados por 3 ou mais commits de correção (top).
-  Extração  : cruzamento fix commits x numstat por ficheiro.
-  Porquê    : módulos reincidentes mostram onde investir primeiro em testes
-              e revisão com IA.
-  Fase/Método/Prio : testing / heuristic / P1
-
-stability.reverts
-  O que é   : nº de commits de revert.
-  Extração  : git log --grep='^Revert "' (e "This reverts commit").
-  Porquê    : alterações arriscadas sem rede de segurança.
-  Fase/Método/Prio : testing / exact / P2
-
-------------------------------------------------------------------------------
-H. KNOWLEDGE (concentração de conhecimento, em agregado)
-------------------------------------------------------------------------------
-
-knowledge.bus_factor
-  O que é   : nº mínimo de autores que cobrem 50% das linhas atuais, mais
-              single_owner_file_share (% de ficheiros com um autor >= 80%
-              das linhas).
-  Extração  : git blame --line-porcelain -w -M por ficheiro, com .mailmap e
-              sem bots. Barato em repos de até ~50 ficheiros; em maiores,
-              limitar aos top-N por complexidade ou churn.
-  Porquê    : conhecimento concentrado -> IA para explicar código,
-              documentar e acelerar onboarding. Autores com vários emails
-              distorcem o valor; sinalizar quando não há .mailmap.
-  Fase/Método/Prio : development / exact / P1
-
-knowledge.stale_files
-  O que é   : % de ficheiros sem alteração há mais de 365 dias e % de linhas
-              com mais de 1 ano.
-  Extração  : git log -1 --format=%aI -- <ficheiro>; datas do blame.
-  Porquê    : legado parado, normalmente sem docs nem testes -> IA para
-              compreensão e modernização cautelosa.
-  Fase/Método/Prio : development / exact / P2
-
-knowledge.active_authors
-  O que é   : autores humanos ativos nos últimos 90 dias vs. total
-              histórico (agregado).
-  Extração  : git log com .mailmap, sem bots.
-  Porquê    : tamanho real da equipa e saída de pessoas; cruza com o tamanho
-              de equipa declarado.
-  Fase/Método/Prio : development / exact / P2
-
-------------------------------------------------------------------------------
-I. DOCS_REQUIREMENTS (o pouco que o repo mostra de requisitos e design)
-------------------------------------------------------------------------------
-
-docs_requirements.docs_inventory
-  O que é   : presença e path de README (com secções detetadas: instalação,
-              uso, arquitetura), CHANGELOG, ADRs, OpenAPI/Swagger, diagramas
-              (.puml, .mmd, .drawio), specs Gherkin (.feature) e docs/.
-  Extração  : git ls-files + cabeçalhos do README.
-  Porquê    : ausência -> IA para refinar user stories, documentar
-              arquitetura e gerar OpenAPI a partir do código. Reportar como
-              "não visível no repositório".
-  Fase/Método/Prio : requirements, design / exact / P1
-
-docs_requirements.doc_drift_days
-  O que é   : dias entre a última alteração de README/docs e o último commit
-              de código.
-  Extração  : git log -1 --format=%aI -- <paths de docs> vs. de código.
-  Porquê    : documentação desatualizada -> manutenção de docs com IA.
-  Fase/Método/Prio : design / exact / P2
-
-docs_requirements.process_artifacts
-  O que é   : templates de PR e de issue, CONTRIBUTING, CODEOWNERS,
-              SECURITY.md.
-  Extração  : git ls-files (.github/, raiz).
-  Porquê    : processo formalizado ou não. CODEOWNERS indica aprovações
-              obrigatórias (contexto para queixas de permissões, não prova).
-  Fase/Método/Prio : requirements / exact / P2
-
-------------------------------------------------------------------------------
-J. TOOLING (inventário normalizado)
-------------------------------------------------------------------------------
-
-tooling.detected / tooling.not_found / tooling.mentioned
-  O que é   : três listas.
-              detected  : ferramenta, categoria e evidência.
-              not_found : o que foi procurado sem resultado.
-              mentioned : ferramentas sem rasto técnico possível (Jira,
-              Confluence, Slack, Notion, Trello) vistas em README, docs ou
-              commits.
-  Extração  : tools_catalog.yaml com nomes normalizados (jenkins,
-              github_actions, gitlab_ci, eslint, ruff, flake8, black,
-              prettier, mypy, pytest, jest, docker, terraform, sonar,
-              postman, pre_commit, dependabot, renovate...), por ficheiros
-              de configuração, dependências e secções de pyproject.
-  Porquê    : cruza com o que a equipa disser ("usamos Jenkins"). Mostra
-              que linter, formatador e CI existem e que lacunas a IA pode
-              preencher.
-  Fase/Método/Prio : todas / exact (detected, not_found) e heuristic
-                     (mentioned) / P1
-
-------------------------------------------------------------------------------
-K. DELIVERY (CI/CD e deploy, só o que o repo mostra)
-------------------------------------------------------------------------------
-
-delivery.ci_pipelines
-  O que é   : sistemas de CI encontrados, com jobs/stages classificados em
-              lint, test, build, security e deploy, e triggers (push, PR,
-              tag, manual).
-  Extração  : parse de .github/workflows/*.yml, .gitlab-ci.yml,
-              azure-pipelines.yml; regex stage() no Jenkinsfile;
-              classificação por comando (pytest, npm test, mvn test, eslint,
-              ruff, trivy, bandit, docker build, kubectl, terraform apply).
-  Porquê    : pipeline sem lint, teste ou segurança -> configuração
-              assistida de pipeline. Sem pipeline -> começar por criá-lo.
-  Fase/Método/Prio : deployment / exact (ficheiros) e heuristic
-                     (classificação) / P1
-
-delivery.deploy_automation
-  O que é   : se o pipeline tem passo de deploy, alvo identificável
-              (registry, k8s, cloud, ssh, pages) e indícios de deploy
-              manual (deploy.sh, alvo deploy no Makefile, runbooks).
-  Extração  : comandos e actions nos pipelines; ficheiros de script.
-  Porquê    : deploy manual -> IA para gerar pipelines e IaC. Não mostra a
-              frequência real de deploys nem tempos de espera.
-  Fase/Método/Prio : deployment / heuristic / P1
-
-delivery.environments
-  O que é   : ambientes referenciados (dev, staging, production) e se há
-              required reviewers de ambiente nos workflows.
-  Extração  : chaves environment nos workflows e ficheiros de config.
-  Porquê    : contexto para queixas sobre aprovações. A branch protection
-              real não é visível sem API.
-  Fase/Método/Prio : deployment / exact / P2
-
-delivery.iac_and_containers
-  O que é   : Dockerfile (imagem base, multi-stage), docker-compose,
-              manifests k8s, Helm, Terraform, Ansible, Makefile.
-  Extração  : git ls-files + conteúdo mínimo (FROM, kind:).
-  Porquê    : grau de automação da infraestrutura; ausência -> geração
-              assistida de Dockerfile e IaC.
-  Fase/Método/Prio : deployment / exact / P2
-
-delivery.dependency_automation
-  O que é   : dependabot/renovate, pre-commit, lockfiles e nº de
-              dependências diretas.
-  Extração  : ficheiros de config e manifestos.
-  Porquê    : sem bot nem lockfile -> IA para upgrades e migrações.
-  Fase/Método/Prio : deployment / exact / P2
-
-delivery.release_cadence
-  O que é   : nº de tags, intervalo mediano entre tags (dias), % semver e
-              presença de CHANGELOG.
-  Extração  : git tag --sort=creatordate --format='%(refname:short)|%(creatordate:iso-strict)'
-  Porquê    : proxy da frequência de entrega (não a real). Sem tags -> IA
-              para release notes e changelogs.
-  Fase/Método/Prio : deployment / exact / P2
-
-------------------------------------------------------------------------------
-L. OBSERVABILITY (monitorização: a fase com menos visibilidade no repo)
-------------------------------------------------------------------------------
-
-observability.logging_practice
-  O que é   : bibliotecas de logging usadas (logging, structlog, loguru,
-              winston, pino, slf4j, log4j), se o formato é estruturado e
-              print_vs_logger_ratio = print / (print + logger).
-  Extração  : imports e contagem de chamadas print( / console.log( vs.
-              logger.
-  Porquê    : logs pobres -> estruturação e instrumentação assistidas;
-              melhor debugging.
-  Fase/Método/Prio : monitoring / heuristic / P2
-
-observability.monitoring_tooling
-  O que é   : Sentry, prometheus_client, Micrometer, OpenTelemetry, SDKs de
-              Datadog/New Relic; endpoints de health (/health, /healthz,
-              /ready).
-  Extração  : dependências, imports e padrões de rotas.
-  Porquê    : sem métricas, tracing ou erros -> instrumentação assistida.
-  Fase/Método/Prio : monitoring / exact / P2
-
-------------------------------------------------------------------------------
-M. SECURITY (sobretudo guardrails para o uso de IA)
-------------------------------------------------------------------------------
-
-security.secrets_exposed
-  O que é   : nº, path:linha e tipo de segredos no working tree e no
-              histórico. Nunca o valor.
-  Extração  : gitleaks detect --redact (ou conjunto de regex offline).
-  Porquê    : não é oportunidade de IA, é guardrail: segredos têm de ser
-              removidos e rodados antes de qualquer ferramenta de IA ver o
-              código.
-  Fase/Método/Prio : deployment / heuristic / P1
-
-security.env_files_committed
-  O que é   : ficheiros sensíveis versionados (.env, *.pem, id_rsa,
-              credentials*), se o .gitignore os cobre e se há .env.example.
-  Extração  : git ls-files + leitura do .gitignore.
-  Porquê    : higiene básica e guardrail.
-  Fase/Método/Prio : deployment / exact / P2
-
-security.security_scanning
-  O que é   : SAST ou scan de dependências configurados (bandit, semgrep,
-              codeql, trivy, snyk, npm audit, OWASP dependency-check).
-  Extração  : pipelines e ficheiros de configuração.
-  Porquê    : ausência -> configuração assistida de scans e triagem de
-              alertas.
-  Fase/Método/Prio : deployment / exact / P2
-
-security.sensitive_data_markers
-  O que é   : nº de ficheiros e campos com identificadores de dados pessoais
-              (email, nif, iban, password, ssn, birth, health) e menções a
-              GDPR, PCI, HIPAA nos docs.
-  Extração  : regex sobre identificadores em código e schemas; grep nos docs.
-  Porquê    : guardrail de privacidade: com dados pessoais, usar IA só em
-              código sem dados reais e com ferramentas aprovadas.
-  Fase/Método/Prio : development / heuristic / P3
-
-------------------------------------------------------------------------------
-N. AI_USAGE (IA já existente, sempre em chaves separadas)
-------------------------------------------------------------------------------
-
-ai_usage.in_development
-  O que é   : ficheiros de contexto de IA (AGENTS.md, CLAUDE.md,
-              .cursorrules, .cursor/, .github/copilot-instructions.md,
-              .aider*, .continue/) e trailers de commit (Co-authored-by com
-              Copilot/Claude/Cursor, "Generated with").
-  Extração  : git ls-files + grep nos trailers (git log --format=%B).
-  Porquê    : mede a adoção real de IA no desenvolvimento e contrasta com a
-              maturidade declarada pela equipa.
-  Fase/Método/Prio : development / exact (ficheiros) e heuristic (trailers)
-                     / P1
-
-ai_usage.in_product
-  O que é   : SDKs de IA nas dependências (openai, anthropic, langchain,
-              transformers, llama-index...).
-  Extração  : manifestos.
-  Porquê    : IA NO PRODUTO. Reportada à parte: não é adoção de IA no
-              desenvolvimento e não deve ser confundida com ela.
-  Fase/Método/Prio : development / exact / P2
-
-------------------------------------------------------------------------------
-O. TRENDS (um número diz "como está", uma tendência diz "para onde vai")
-------------------------------------------------------------------------------
-
-trends.commits_per_month / active_authors_per_quarter /
-trends.fix_share_per_quarter / test_commit_share_per_quarter
-  O que é   : quatro séries temporais.
-              commits_per_month             : atividade
-              active_authors_per_quarter    : pessoas ativas
-              fix_share_per_quarter         : % de commits de correção
-              test_commit_share_per_quarter : % de commits que tocam testes
-  Extração  : agrupamento por mês/trimestre dos dados da passagem única do
-              git log (custo marginal quase nulo).
-  Porquê    : permite dizer "atividade a cair", "testes abandonados",
-              "bugs a aumentar", "conhecimento a concentrar-se".
-              Só emitidas se history_confidence >= medium; caso contrário,
-              status "insufficient_history".
-  Fase/Método/Prio : development, testing / exact (commits, autores) e
-                     heuristic (correções, testes) / P2
-
-------------------------------------------------------------------------------
-P. DERIVED (cruzamentos entre métricas, ainda determinísticos)
-------------------------------------------------------------------------------
-
-derived.hotspots
-  O que é   : ficheiros com churn E complexidade no percentil >= p75.
-              Campos: path, churn_commits, lines_changed, cc_max,
-              top_author_share, has_mapped_test, fix_commits.
-  Extração  : churn_by_file x cyclomatic_complexity (agregado por ficheiro)
-              x untested_modules x repeat_fix_files x bus_factor.
-  Porquê    : os candidatos mais fortes para IA em refactoring, revisão e
-              testes de caracterização.
-  Fase/Método/Prio : development, testing / heuristic / P1
-
-derived.complex_untested
-  O que é   : funções com CCN >= 10 cujo módulo não tem teste mapeado (top-10).
-  Extração  : cyclomatic_complexity x untested_modules.
-  Porquê    : prioridade de geração de testes com IA.
-  Fase/Método/Prio : testing / heuristic / P1
-
-derived.bug_magnets
-  O que é   : ficheiros reincidentes em correções e sem teste mapeado.
-  Extração  : repeat_fix_files x untested_modules.
-  Porquê    : os pontos mais frágeis do código.
-  Fase/Método/Prio : testing / heuristic / P2
-
-derived.single_owner_hotspots
-  O que é   : hotspots com um autor acima de 85% das linhas.
-  Extração  : hotspots x bus_factor.
-  Porquê    : risco de conhecimento no código crítico -> documentação e
-              explicação de código assistidas.
-  Fase/Método/Prio : development / exact / P2
-
-derived.guardrails
-  O que é   : factos que condicionam as recomendações (sem score composto):
-              has_tests, ci_runs_tests, has_linter, has_formatter,
-              typing_level, repo_fits_in_context, secrets_present,
-              history_confidence.
-  Extração  : derivados de test_inventory, ci_pipelines, tooling,
-              typing_level, repo_size, secrets_exposed e data_quality.
-  Porquê    : evita recomendar o impossível. Ex.: sem testes e sem CI, a
-              recomendação passa a ser "primeiro rede de segurança, depois
-              IA em refactoring" (Apêndice A, G1).
-  Fase/Método/Prio : todas / exact / P1
-
-derived.internal_observations
-  O que é   : lista de flags factuais de incoerência no próprio repo, sem
-              interpretação. Servem de pista para a LLM confirmar com a
-              equipa.
-              manifest_without_code   : package.json presente e < 5% de LOC
-                                        JS/TS
-              code_without_manifest   : > 500 LOC de uma linguagem sem
-                                        manifesto de dependências
-              ci_without_test_stage   : há CI mas sem passo de teste
-              tests_not_in_ci         : há testes e nenhum pipeline os corre
-              tool_configured_not_used: configuração de ferramenta sem
-                                        ficheiros da linguagem (ex.:
-                                        .eslintrc com 0 ficheiros JS)
-              docs_stale              : docs sem alterações > 365 dias com
-                                        código ativo nos últimos 90 dias
-              single_author_hotspots  : ver derived.single_owner_hotspots
-              dormant_repo            : > 90 dias entre o último commit e a
-                                        ref_date (só se ref_date fornecida)
-  Extração  : condições acima sobre as métricas base.
-  Porquê    : são o tipo de achado que mais valor tem num relatório: o que o
-              repo mostra e a equipa não disse, ou o contrário.
-  Fase/Método/Prio : todas / exact / P1
-
-------------------------------------------------------------------------------
-Q. EXAMPLES E NOT_OBSERVABLE
-------------------------------------------------------------------------------
-
-examples
-  O que é   : 3 a 5 casos concretos por tipo (untested_complex, repeat_fix,
-              weak_commit_message, undocumented_public_api,
-              single_owner_hotspot), com path, função, SHA e valores.
-  Extração  : top-N determinístico (ordenado por valor e depois por path).
-  Porquê    : com nomes concretos a LLM escreve "o orders.py tem
-              complexidade 27 e nenhum teste" em vez de "há código
-              complexo". Nunca inclui código, só referências.
-  Fase/Método/Prio : todas / exact / P1
-
-not_observable
-  O que é   : lista fixa, sempre incluída, do que um repositório nunca
-              mostra.
-  Extração  : estática.
-  Porquê    : impede a LLM de inventar. Estes temas só vêm da conversa com a
-              equipa.
-              permission_wait_times, lead_and_cycle_time,
-              real_deploy_frequency, incidents_and_recovery,
-              requirements_quality, pr_review_time, real_test_coverage,
-              test_flakiness, team_skills, compliance_and_allowed_tools,
-              manual_processes_outside_repo
-  Fase/Método/Prio : todas / exact / P1
-
-==============================================================================
-EXEMPLO DE JSON DE VALORES (signals.json)
-==============================================================================
-
-Cada bloco omite method e confidence por brevidade: o método está neste
-dicionário e a confiança de histórico vem de data_quality. Os blocos
-checked/not_found aparecem só em testing e tooling, mas existem em todos.
-
-{
-  "meta": {
-    "schema_version": "2.0",
-    "repo_head": "a1b2c3d",
-    "ref_date": "2026-09-30",
-    "tool_versions": {"scanner": "0.1.0", "scc": "3.4.0", "lizard": "1.17.13", "jscpd": "4.0.5", "gitleaks": "8.18.4"},
-    "thresholds_hash": "9f3e1c"
-  },
-  "data_quality": {
-    "commits_total": 212,
-    "span_weeks": 31,
-    "days_since_last_commit": null,
-    "is_shallow": false,
-    "squash_suspected": false,
-    "bot_commit_share": 0.08,
-    "history_confidence": "high",
-    "file_inventory": {"analyzed": 47, "ignored": {"vendor": 12, "generated": 3, "binary": 5}},
-    "collector_status": {"git": "ok", "complexity": "ok", "testing": "ok", "delivery": "ok", "security": "partial"}
-  },
-  "project_profile": {
-    "lang_share": {"python": 0.94, "javascript": 0.03, "other": 0.03},
-    "lang_share_by_folder": {"src/": {"python": 1.0}, "scripts/": {"javascript": 0.9, "python": 0.1}},
-    "language_role": {"javascript": "build_tooling_only"},
-    "manifests_and_lockfiles": {"manifests": ["requirements.txt", "package.json"], "lockfiles": []},
-    "frameworks": ["fastapi", "sqlalchemy", "postgres"],
-    "project_type": "api_backend",
-    "runtimes": [{"name": "python", "version": "3.8", "source": ".python-version", "eol": true}],
-    "repo_size": {"files": 47, "loc": 6120, "approx_tokens": 78000}
-  },
-  "testing": {
-    "test_inventory": {"files": 0, "functions": 0},
-    "test_frameworks": [],
-    "test_code_ratio": 0.0,
-    "test_types": {"unit": false, "integration": false, "e2e": false},
-    "untested_modules": [{"path": "src/orders.py", "cc_max": 27}, {"path": "src/billing.py", "cc_max": 19}],
-    "coverage_config": false,
-    "test_commit_share": 0.0,
-    "checked": ["pytest", "unittest", "jest", "mocha", "junit", "cypress", "playwright"],
-    "not_found": ["pytest", "unittest", "jest", "mocha", "junit", "cypress", "playwright"]
-  },
-  "code_health": {
-    "cyclomatic_complexity": {"p50": 3, "p90": 12, "max": 27, "top": [{"path": "src/orders.py", "function": "process", "ccn": 27}, {"path": "src/billing.py", "function": "invoice", "ccn": 19}]},
-    "function_smells": {"long_functions": 6, "many_params": 3, "top": [{"path": "src/orders.py", "function": "process", "nloc": 118, "params": 7}]},
-    "large_files": {"over_500": 3, "over_1000": 0},
-    "duplication_and_boilerplate": {"duplication_pct": 0.12, "similar_file_groups": [["routes/users.py", "routes/orders.py", "routes/items.py"]]},
-    "docstring_coverage": 0.18,
-    "typing_level": {"python_annotated_functions": 0.05, "typescript_share": 0.0, "level": "low"},
-    "tech_debt_markers": {"count": 41, "top_files": [{"path": "src/orders.py", "count": 9}]},
-    "weak_error_handling": {"bare_except": 9, "empty_catch": 0}
-  },
-  "development_process": {
-    "churn_by_file": {"window": "12m", "top": [{"path": "src/orders.py", "commits": 41, "lines_added": 1320, "lines_deleted": 980}]},
-    "commit_size": {"lines_p50": 24, "lines_p90": 640, "files_p50": 2, "files_p90": 11, "share_over_500_lines": 0.12},
-    "commit_message_quality": {"median_length": 21, "generic_share": 0.31, "conventional_commits_share": 0.02},
-    "traceability": {"issue_ref_share": 0.12, "dominant_pattern": "PROJ-"},
-    "merge_and_branching": {"merge_ratio": 0.04, "branch_prefixes": {"feature/": 3}, "direct_commits_main_share": 0.7},
-    "change_coupling": [{"files": ["src/orders.py", "src/billing.py"], "cochanges": 14, "ratio": 0.78}]
-  },
-  "stability": {
-    "fix_commit_ratio": 0.34,
-    "repeat_fix_files": [{"path": "src/orders.py", "fix_commits": 7}],
-    "reverts": 6
-  },
-  "knowledge": {
-    "bus_factor": 1,
-    "single_owner_file_share": 0.62,
-    "stale_files": {"files_untouched_365d_share": 0.21, "lines_older_than_1y_share": 0.45},
-    "active_authors": {"last_90d": 2, "total_historical": 7}
-  },
-  "docs_requirements": {
-    "docs_inventory": {"readme": {"present": true, "sections": ["install"]}, "changelog": false, "adr": false, "openapi": false, "diagrams": [], "gherkin_specs": false, "docs_dir": false},
-    "doc_drift_days": 410,
-    "process_artifacts": {"pr_template": false, "issue_templates": false, "contributing": false, "codeowners": false, "security_md": false}
-  },
-  "tooling": {
-    "detected": [
-      {"tool": "github_actions", "category": "ci", "evidence": [".github/workflows/ci.yml"]},
-      {"tool": "docker", "category": "container", "evidence": ["Dockerfile"]}
-    ],
-    "not_found": ["jenkins", "gitlab_ci", "eslint", "ruff", "black", "mypy", "sonar", "postman"],
-    "mentioned": [{"tool": "jira", "evidence": ["commit_prefix:PROJ-"]}]
-  },
-  "delivery": {
-    "ci_pipelines": [{"system": "github_actions", "file": ".github/workflows/ci.yml", "stages": ["build"], "triggers": ["push"]}],
-    "deploy_automation": {"deploy_step_in_pipeline": false, "target": null, "manual_hints": ["deploy.sh"]},
-    "environments": {"names": ["production"], "required_reviewers": false},
-    "iac_and_containers": {"dockerfile": true, "compose": true, "k8s": false, "terraform": false, "makefile": true},
-    "dependency_automation": {"dependabot": false, "renovate": false, "pre_commit": false, "lockfile": false, "direct_dependencies": 23},
-    "release_cadence": {"tags": 4, "median_days_between_tags": 52, "semver_share": 1.0, "changelog": false}
-  },
-  "observability": {
-    "logging_practice": {"libraries": ["logging"], "structured": false, "print_vs_logger_ratio": 0.8},
-    "monitoring_tooling": {"detected": [], "health_endpoint": true}
-  },
-  "security": {
-    "secrets_exposed": {"count": 1, "items": [{"path": "config/settings.py", "line": 14, "type": "api_key", "in_history_only": false}]},
-    "env_files_committed": {"files": [], "gitignore_covers_env": true, "env_example": false},
-    "security_scanning": {"detected": []},
-    "sensitive_data_markers": {"fields": ["email", "nif"], "files": 6, "regulation_mentions": ["GDPR"]}
-  },
-  "ai_usage": {
-    "in_development": {"config_files": [], "commit_trailers": 0},
-    "in_product": {"sdks": ["openai"]}
-  },
-  "trends": {
-    "status": "ok",
-    "commits_per_month": [40, 38, 35, 20, 12, 9],
-    "active_authors_per_quarter": [5, 4, 2],
-    "fix_share_per_quarter": [0.22, 0.31, 0.45],
-    "test_commit_share_per_quarter": [0.0, 0.0, 0.0]
-  },
-  "derived": {
-    "hotspots": [{"path": "src/orders.py", "churn_commits": 41, "lines_changed": 2300, "cc_max": 27, "top_author_share": 0.92, "has_mapped_test": false, "fix_commits": 7}],
-    "complex_untested": [{"path": "src/orders.py", "function": "process", "ccn": 27}],
-    "bug_magnets": ["src/orders.py"],
-    "single_owner_hotspots": ["src/orders.py"],
-    "guardrails": {"has_tests": false, "ci_runs_tests": false, "has_linter": false, "has_formatter": false, "typing_level": "low", "repo_fits_in_context": true, "secrets_present": true, "history_confidence": "high"},
-    "internal_observations": ["manifest_without_code", "single_author_hotspots", "docs_stale"]
-  },
-  "examples": [
-    {"type": "weak_commit_message", "sha": "d4e5f6a", "subject": "wip"},
-    {"type": "undocumented_public_api", "path": "src/orders.py", "function": "process"}
-  ],
-  "not_observable": ["permission_wait_times", "lead_and_cycle_time", "real_deploy_frequency", "incidents_and_recovery", "requirements_quality", "pr_review_time", "real_test_coverage", "test_flakiness", "team_skills", "compliance_and_allowed_tools", "manual_processes_outside_repo"]
-}
-
-==============================================================================
-APÊNDICE A - COMO A LLM USA AS MÉTRICAS (fora do scanner)
-==============================================================================
-
-Esta tabela é conhecimento para o prompt da LLM, não lógica do scanner. A LLM
-deve apresentar cada ponto como hipótese com a evidência citada, e não como
-conclusão.
-
-OPORTUNIDADES (sinal -> hipótese de IA [fase])
-
-  A1  test_inventory.files = 0 (nenhum teste encontrado)
-        -> geração de testes unitários com IA, no framework dominante da
-           stack [testing]
-  A2  complex_untested ou untested_modules não vazios
-        -> testes dirigidos às funções mais complexas sem teste [testing]
-  A3  fix_commit_ratio alto + repeat_fix_files / bug_magnets
-        -> testes de regressão e revisão estática assistida nesses
-           ficheiros [testing]
-  A4  hotspots (churn x complexidade)
-        -> refactoring assistido, precedido de testes de caracterização
-           [development]
-  A5  commit_size.p90 alto + merge_ratio baixo ou direct_commits_main_share
-      alto
-        -> pré-revisão de código e sumarização de alterações [development]
-  A6  docstring_coverage baixo ou doc_drift_days alto
-        -> geração e atualização de documentação [development, design]
-  A7  bus_factor <= 2 ou single_owner_hotspots
-        -> explicação de código, documentação e onboarding assistidos
-           [development]
-  A8  commit_message_quality fraca ou traceability baixa
-        -> mensagens de commit, changelogs e ligação commits <-> requisitos
-           [requirements, development]
-  A9  docs_inventory sem specs, ADRs nem OpenAPI
-        -> refinamento de user stories, documentação de arquitetura, OpenAPI
-           gerado a partir do código [requirements, design]
-  A10 ci_pipelines sem stages de lint, test ou security (ou sem CI)
-        -> geração e configuração assistida de pipeline [deployment]
-  A11 deploy_automation sem deploy no pipeline + manual_hints
-        -> geração de pipeline de deploy e IaC [deployment]
-  A12 logging_practice com print dominante / sem monitoring_tooling
-        -> estruturação de logs e instrumentação assistida [monitoring]
-  A13 weak_error_handling alto
-        -> revisão assistida do tratamento de erros [development,
-           monitoring]
-  A14 duplication_pct alto ou similar_file_groups
-        -> consolidação de duplicados e geração de boilerplate [development]
-  A15 runtimes com eol = true ou sem dependency_automation
-        -> upgrades e migrações assistidos [deployment]
-  A16 ai_usage.in_development vazio
-        -> ponto de partida: IA ainda não adotada no desenvolvimento;
-           contrastar com a maturidade declarada
-
-GUARDRAILS (sinal -> condição sobre as recomendações)
-
-  G1  has_tests = false e ci_runs_tests = false
-        -> primeiro criar a rede de segurança (testes gerados + CI) e só
-           depois IA para refactoring
-  G2  secrets_present = true
-        -> remover e rodar segredos antes de usar ferramentas de IA no repo
-  G3  sensitive_data_markers não vazio
-        -> IA só em código sem dados reais e com ferramentas aprovadas
-  G4  repo_fits_in_context = false ou large_files.over_1000 > 0
-        -> aplicar IA por módulo, não ao repositório inteiro
-  G5  history_confidence = low
-        -> não afirmar tendências nem métricas de histórico sem confirmação
-           da equipa
-  G6  ai_usage.in_product preenchido e in_development vazio
-        -> não tratar os SDKs como adoção de IA no desenvolvimento
-
-==============================================================================
-APÊNDICE B - REMOVIDO OU ADIADO, E PORQUÊ
-==============================================================================
-
-  Dados de plataforma (tempo de review, issues, falhas de CI, branch
-  protection)
-      Exigem API e token, não vêm do git. Módulo opcional futuro; até lá
-      ficam em not_observable e vêm da conversa.
-  Rework, fix-after-change, hotfix branches, ficheiros efémeros
-      Sobrepõem-se a fix_commit_ratio e repeat_fix_files e são ruidosos.
-  Complexidade e rácio de testes "ao longo do tempo"
-      Exigem reconstruir versões antigas. Substituídos por
-      test_commit_share_per_quarter, que sai do log.
-  Grafo de imports e ciclos
-      Custo alto e pouco fiável em linguagens dinâmicas. O change_coupling
-      dá um sinal parecido só com git.
-  Código morto
-      Pouco fiável em Python e JavaScript.
-  Idade das dependências e vulnerabilidades
-      Precisam de base de dados externa (rede), o que quebra o determinismo.
-  Ritmo de trabalho (commits à noite ou ao fim de semana)
-      Indício fraco e eticamente delicado.
-  Licenças, idioma dos commits, rácio de comentários
-      Não alteram onde a IA ajuda.
-  Indícios de testes manuais (checklists, Postman)
-      Fracos. O Postman fica no inventário de ferramentas.
-  Score composto de "prontidão para IA"
-      Não é defensável perante um cliente. Substituído por guardrails
-      explícitos.
-  Métricas por pessoa
-      Pouco fiáveis e eticamente problemáticas. Só agregados de equipa.
-
-==============================================================================
-APÊNDICE C - ORDEM DE IMPLEMENTAÇÃO
-==============================================================================
-
-  Fase 1 (só ficheiros e árvore do repo; barato)
-      meta, data_quality, project_profile, tooling, testing, delivery,
-      docs_requirements, ai_usage, security (env_files e scanning)
-  Fase 2 (uma passagem de git log)
-      development_process, stability, trends, knowledge.active_authors,
-      security.secrets_exposed
-  Fase 3 (scc, lizard e blame)
-      code_health, knowledge (bus_factor, stale_files), derived, examples
-  Fase 4 (P3 e opcionais)
-      change_coupling, sensitive_data_markers, runtimes (EOL), duplicação
-      com jscpd
+# Métricas Git para identificar oportunidades de integração de AI no SDLC
+#
+# Objetivo
+# Recolher sinais observáveis num repositório Git para ajudar uma LLM a identificar
+# fases do Software Development Life Cycle (SDLC) onde a AI poderá trazer valor.
+#
+# Formato de cada métrica
+# Nome: identificador curto da métrica
+# Recolha: valor ou evidência a extrair do Git/repositório
+# Razão: porque é útil para avaliar oportunidades de AI
+# Interpretação: exemplos de oportunidades que a LLM pode investigar
+#
+# Notas de utilização
+# - As métricas são sinais, não provas de que uma equipa precisa de AI.
+# - Comparar períodos equivalentes e, quando possível, segmentar por pasta, equipa
+#   (se for conhecida), tipo de ficheiro e fase do SDLC.
+# - Não inferir produtividade individual a partir de commits; commits variam em tamanho
+#   e convenções e podem ser agregados, revertidos ou automatizados.
+# - Evitar enviar segredos, credenciais, dados pessoais ou código confidencial à LLM.
+# - Usar apenas metadados e conteúdo que a organização esteja autorizada a processar.
+# - Quando possível, combinar estas métricas com dados de PRs, CI/CD, testes e tickets;
+#   muitos desses dados não existem no Git por si só.
+#
+# 01
+Nome: Número de commits por período
+Recolha: Contagem de commits por semana/mês, com datas e branches relevantes.
+Razão: Estabelece o ritmo de alteração do código e ajuda a identificar períodos de atividade.
+Interpretação: Avaliar assistência AI para tarefas repetitivas, documentação ou revisão em áreas de alteração frequente.
+#
+# 02
+Nome: Frequência de commits por diretório/componente
+Recolha: Contagem de commits que alteram cada diretório, módulo ou componente.
+Razão: Mostra onde se concentra a atividade e quais as áreas com maior procura de manutenção.
+Interpretação: Priorizar pilotos de AI em módulos muito ativos ou com tarefas repetitivas.
+#
+# 03
+Nome: Tamanho das alterações por commit
+Recolha: Linhas adicionadas/removidas e número de ficheiros alterados por commit; guardar mediana e percentis, não só a média.
+Razão: Alterações grandes podem ser difíceis de rever e compreender.
+Interpretação: Investigar geração de resumos, explicações de diff e decomposição de alterações.
+#
+# 04
+Nome: Frequência de commits de correção
+Recolha: Contagem de commits cujo assunto contém termos como fix, bug, hotfix, defect ou equivalentes definidos pela equipa.
+Razão: Dá um sinal aproximado da carga de correção; a classificação por texto é imperfeita.
+Interpretação: Avaliar AI para triagem de bugs, sugestão de correções ou geração de testes de regressão.
+#
+# 05
+Nome: Frequência de reversões
+Recolha: Contagem de commits revert, revertidos ou com padrões equivalentes, confirmados quando possível pela história Git.
+Razão: Reversões podem indicar alterações problemáticas, incompatibilidades ou requisitos mal compreendidos.
+Interpretação: Explorar revisão assistida por AI, análise de impacto e verificações antes do merge.
+#
+# 06
+Nome: Frequência de commits de refactoring
+Recolha: Commits identificados como refactor, cleanup, restructure ou equivalentes; validar amostras manualmente.
+Razão: Expõe esforço recorrente de melhoria estrutural sem funcionalidade nova.
+Interpretação: Avaliar assistência para refactoring seguro, deteção de duplicação e explicação de código legado.
+#
+# 07
+Nome: Tempo entre alterações relacionadas
+Recolha: Intervalo entre commits que alteram o mesmo ficheiro ou componente, usando uma janela temporal definida.
+Razão: Alterações repetidas em pouco tempo podem refletir iteração intensa ou retrabalho; não provam retrabalho por si só.
+Interpretação: Investigar sugestões AI, análise de impacto e melhoria da qualidade da primeira alteração.
+#
+# 08
+Nome: Ficheiros com maior churn
+Recolha: Ranking de ficheiros por total de linhas adicionadas e removidas num período.
+Razão: Ficheiros com churn elevado podem ser instáveis, complexos ou centrais para o produto.
+Interpretação: Priorizar testes, documentação contextual, revisão assistida ou análise de risco.
+#
+# 09
+Nome: Concentração de alterações em ficheiros críticos
+Recolha: Frequência de alterações em ficheiros de configuração, autenticação, autorização, pagamentos, deployment ou outros caminhos definidos como críticos.
+Razão: Alterações nestas áreas podem exigir validação reforçada.
+Interpretação: Avaliar revisão AI orientada a segurança e políticas, sempre com aprovação humana.
+#
+# 10
+Nome: Linguagens de programação utilizadas
+Recolha: Linguagens e proporção aproximada de ficheiros/linhas por linguagem, excluindo dependências vendorizadas e artefactos gerados.
+Razão: Identifica os ecossistemas técnicos e condiciona ferramentas e modelos adequados.
+Interpretação: Escolher assistentes, analisadores estáticos e modelos com suporte apropriado às linguagens presentes.
+#
+# 11
+Nome: Frameworks e bibliotecas detetadas
+Recolha: Dependências e versões a partir de package.json, pom.xml, build.gradle, requirements.txt, pyproject.toml, go.mod, Cargo.toml e ficheiros equivalentes.
+Razão: O contexto das frameworks é essencial para sugestões de código compatíveis.
+Interpretação: Avaliar AI para scaffolding, migrações, atualização de dependências e assistência contextual por framework.
+#
+# 12
+Nome: Gestores de dependências e ficheiros de lock
+Recolha: Presença e alterações em package-lock.json, pnpm-lock.yaml, yarn.lock, poetry.lock, uv.lock, Cargo.lock e equivalentes.
+Razão: Mostra como as dependências são geridas e quando mudam.
+Interpretação: Explorar resumos de atualizações, deteção de breaking changes e assistência a upgrades.
+#
+# 13
+Nome: Frequência de atualização de dependências
+Recolha: Commits que alteram manifestos/lockfiles; identificar atualizações diretas e automatizadas quando possível.
+Razão: Atualizações frequentes podem exigir avaliação de compatibilidade e risco.
+Interpretação: Avaliar resumos AI de changelogs, análise de impacto e propostas de migração.
+#
+# 14
+Nome: Cobertura de testes representada no repositório
+Recolha: Presença e distribuição de testes unitários, integração, end-to-end e respetivas configurações; não confundir presença de testes com cobertura percentual.
+Razão: Revela que tipos de testes existem e onde parecem faltar.
+Interpretação: Identificar oportunidades para gerar testes, criar casos-limite ou explicar estratégias de teste.
+#
+# 15
+Nome: Alterações a testes versus alterações de produção
+Recolha: Relação, por commit ou período, entre alterações em ficheiros de teste e alterações em código de produção.
+Razão: Ajuda a verificar se as mudanças de código são acompanhadas por testes; a relação não mede qualidade.
+Interpretação: Sugerir testes relevantes quando código de produção muda sem alterações de teste associadas.
+#
+# 16
+Nome: Testes adicionados ou modificados após correções
+Recolha: Identificar correções seguidas de alterações em testes relacionados, por mensagem, ficheiros e proximidade temporal.
+Razão: Indica se os bugs corrigidos estão a ser protegidos contra regressões.
+Interpretação: Assistir na criação de testes de regressão e em sugestões de cenários em falta.
+#
+# 17
+Nome: Configuração de CI
+Recolha: Deteção de GitHub Actions, GitLab CI, Jenkinsfiles, Azure Pipelines e outras definições de integração contínua versionadas.
+Razão: Identifica verificações automatizadas existentes e pontos de integração possíveis.
+Interpretação: Propor AI para sumarizar falhas, classificar erros de pipeline ou explicar logs, se estes estiverem disponíveis.
+#
+# 18
+Nome: Configuração de build e scripts de desenvolvimento
+Recolha: Scripts de build, lint, format, test, type-check e comandos definidos em Makefile ou ferramentas equivalentes.
+Razão: Mostra tarefas repetíveis que podem ser automatizadas ou invocadas por agentes com controlos.
+Interpretação: Identificar fluxos elegíveis para automação assistida por AI, mantendo validação e permissões limitadas.
+#
+# 19
+Nome: Ferramentas de análise estática e qualidade
+Recolha: Configuração de linters, formatters, type checkers, SAST e análise de qualidade, como ESLint, Ruff, mypy, Sonar ou equivalentes.
+Razão: Determina que verificações determinísticas já existem e onde AI pode complementá-las, não substituí-las.
+Interpretação: Integrar explicações de findings, priorização ou correções propostas com validação automática.
+#
+# 20
+Nome: Histórico de documentação
+Recolha: Número e frequência de alterações em README, docs, ADRs, runbooks, guias de onboarding e documentação inline.
+Razão: Documentação pouco atualizada ou alterada em simultâneo com código pode revelar fricção de manutenção.
+Interpretação: Avaliar geração de rascunhos de documentação, atualização de exemplos e deteção de documentação potencialmente desatualizada.
+#
+# 21
+Nome: Relação entre alterações de código e documentação
+Recolha: Identificar commits com código alterado sem documentação associada, usando regras por tipo de alteração.
+Razão: Ajuda a localizar alterações que talvez precisem de explicação; nem toda alteração exige documentação.
+Interpretação: Sugerir atualizações de docs ou notas de versão quando mudanças relevantes são detetadas.
+#
+# 22
+Nome: Padrões de mensagens de commit
+Recolha: Distribuição de convenções como Conventional Commits, referências a tickets, prefixos de bugfix/feature e mensagens pouco descritivas.
+Razão: Mensagens consistentes facilitam contexto e rastreabilidade; mensagens pobres dificultam análise automatizada.
+Interpretação: Avaliar geração de mensagens de commit, classificação de alterações e ligação a requisitos.
+#
+# 23
+Nome: Estrutura e tamanho dos módulos
+Recolha: Número de módulos/pastas, ficheiros por módulo, dependências entre módulos quando inferíveis e ficheiros excessivamente grandes.
+Razão: Contextualiza a arquitetura e identifica componentes difíceis de navegar.
+Interpretação: Explorar pesquisa semântica sobre o código, mapas de arquitetura e explicações de dependências.
+#
+# 24
+Nome: Código duplicado ou padrões repetidos
+Recolha: Resultados de ferramentas de deteção de duplicação, ou padrões repetidos identificados com análise estática; não inferir apenas pelo número de commits.
+Razão: Duplicação pode aumentar o esforço de manutenção e criar alterações inconsistentes.
+Interpretação: Avaliar sugestões de consolidação, refactoring ou geração de componentes reutilizáveis.
+#
+# 25
+Nome: Sinais de dívida técnica
+Recolha: Contagem de TODO, FIXME, HACK, deprecated e supressões de análise estática, com localização e histórico.
+Razão: Dá um inventário inicial de trabalho adiado e zonas que exigem atenção.
+Interpretação: Usar AI para agrupar itens, sugerir prioridade e propor passos de resolução.
+#
+# 26
+Nome: Alterações de segurança e permissões
+Recolha: Alterações em dependências de segurança, ficheiros de permissões, autenticação, autorização, secrets scanning e configurações de segurança.
+Razão: Identifica superfícies sensíveis onde erros têm impacto elevado.
+Interpretação: Avaliar revisão assistida por AI e explicações de alertas, complementadas por scanners determinísticos e revisão humana.
+#
+# 27
+Nome: Configuração de infraestrutura como código
+Recolha: Presença e alterações em Terraform, CloudFormation, Kubernetes manifests, Helm, Dockerfiles e configuração de deployment.
+Razão: Revela a extensão de operações e infraestrutura geridas no repositório.
+Interpretação: Explorar revisão de alterações de infraestrutura, geração de manifests e explicação de diferenças entre ambientes.
+#
+# 28
+Nome: Frequência de alterações em configuração e ambiente
+Recolha: Alterações a ficheiros de configuração, variáveis de ambiente de exemplo e configuração por ambiente; nunca recolher valores secretos.
+Razão: Alterações de configuração podem provocar falhas difíceis de diagnosticar.
+Interpretação: Avaliar deteção de inconsistências, validação de schema e explicação de impacto.
+#
+# 29
+Nome: Padrões de releases e versionamento
+Recolha: Tags, releases refletidas no Git, alterações de versão e ficheiros de changelog.
+Razão: Ajuda a compreender cadência de entrega e como as alterações são agrupadas.
+Interpretação: Avaliar geração de release notes, resumos de alterações e identificação de mudanças incompatíveis.
+#
+# 30
+Nome: Autoria e distribuição de alterações por área
+Recolha: Número de contribuidores distintos e distribuição de commits por componente, agregada por equipa ou período quando apropriado.
+Razão: Ajuda a identificar áreas com conhecimento concentrado ou dependência de poucas pessoas; não deve ser usado como medida individual de desempenho.
+Interpretação: Considerar documentação assistida, explicações de código e recuperação de conhecimento para reduzir dependência de conhecimento tácito.
+#
+# Limites dos dados Git
+# O Git, isoladamente, normalmente não revela com fiabilidade:
+# - duração real de revisão de pull requests, comentários e número de rondas de revisão;
+# - tempo de execução de CI, falhas de pipeline e duração de builds;
+# - cobertura percentual de testes, resultados de produção, incidentes ou MTTR;
+# - requisitos, critérios de aceitação, esforço planeado ou satisfação dos developers.
+# Para estes sinais, integrar fontes autorizadas como plataforma de PRs, CI/CD, issue tracker,
+# ferramentas de testes e incidentes. A LLM deve indicar a fonte e a confiança de cada inferência.
+#
+# Instrução sugerida para a LLM
+# "Analisa as métricas e evidências fornecidas. Para cada oportunidade potencial de AI no SDLC,
+# indica: fase do SDLC, problema observado, métrica que sustenta a hipótese, intervenção AI
+# proposta, benefício esperado, riscos, dependências, esforço de implementação, forma de medir
+# o resultado e nível de confiança. Distingue factos observados de hipóteses. Não concluas que
+# existe um problema apenas porque uma métrica tem um valor elevado; pede contexto quando
+# necessário e recomenda pilotos pequenos com métricas de baseline e avaliação humana."
