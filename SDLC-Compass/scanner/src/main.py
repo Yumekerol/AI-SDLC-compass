@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from .config import settings
@@ -21,14 +23,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sdlc_compass")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Initializing scanner service...")
+    settings.init()
+    logger.info("Scanner service has been started.")
+    yield
+    logger.info("Cleaning temporary files and closing...")
+    settings.close()
+    
+
 app = FastAPI(
     title= settings.app_name,
     version= settings.app_version,
-    description="Scanner prototype for the AI-SDLC-Compass application."
+    description="Scanner prototype for the AI-SDLC-Compass application.",
+    lifespan=lifespan
 )
 
 app.include_router(api)
 
+@app.get("/health", tags=["Health"])
 async def health_check():
     return {
         "status": "healthy",
