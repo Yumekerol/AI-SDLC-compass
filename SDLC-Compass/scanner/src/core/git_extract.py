@@ -296,10 +296,10 @@ async def clone_repository(url: str, token: str | None = None) -> CloneResult:
             _clone_blocking(clone_url, token, dest)
             info = _inspect(dest)
         except subprocess.TimeoutExpired as exc:
-            cleanup_clone(dest)
+            cleanup_dir(dest)
             raise CloneTimeout("Timed out while cloning or inspecting the repository.") from exc
         except Exception:
-            cleanup_clone(dest)
+            cleanup_dir(dest)
             raise
 
         return CloneResult(
@@ -324,7 +324,7 @@ def _make_writable_and_retry(func, path, _exc) -> None:
     func(path)
 
 
-def cleanup_clone(path: Path) -> None:
+def cleanup_dir(path: Path) -> None:
     """Delete a clone. Refuses to touch anything outside the tmp dir."""
     root = _tmp_root().resolve()
     target = Path(path).resolve()

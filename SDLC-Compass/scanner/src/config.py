@@ -1,6 +1,8 @@
-import os
+import os, shutil
 from pathlib import Path
 from enum import Enum
+import sys
+import stat
 
 try:
     from pydantic_settings import BaseSettings
@@ -16,13 +18,14 @@ class Settings(BaseSettings):
     debug: bool = True
 
     host: str = "0.0.0.0"
-    port: int= 8001
+    port: int = 8001
 
     base_dir: Path = Path(__file__).parent
     tmp_dir: Path | None = None
 
     max_file_size_bytes: int = 1_000_000  # Skip files larger than 1MB
     poc_max_files: int = 50  # PoC scope limit
+    poc_max_depth: int = 10  # depth limit (to prevent zip bombs), just a safety measure
     excluded_dirs: list[str] = [
         "node_modules", ".git", "__pycache__", ".venv", "venv",
         "env", ".env", "dist", "build", ".next", ".nuxt",
@@ -49,6 +52,28 @@ class Settings(BaseSettings):
             self.tmp_dir = self.base_dir / "tmp"
 
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        
+    def close(self):
+        if self.tmp_dir is None:
+            return
+        
+        cleanup_dir(self.tmp_dir)
+        #shutil.rmtree(self.tmp_dir)
+
+
+
+def _make_writable_and_retry(func, path, _exc) -> None:
+    """rmtree error handler: .git objects are read-only on Windows."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+def cleanup_dir(path: Path) -> None:
+    target = Path(path).resolve()
+    if not target.exists():
+        return
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(target, onexc=_make_writable_and_retry)
+    else:
+        shutil.rmtree(target, onerror=_make_writable_and_retry)
 
 settings = Settings()
-settings.init()
