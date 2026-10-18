@@ -25,6 +25,8 @@ from ..core.git_extract import cleanup_dir
 
 from ..config import settings
 
+from ..core.metrics import collect_all_metrics
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scan")
@@ -137,5 +139,6 @@ async def start_scan(response: Response, url: str, token: str | None = None):
     
     
     #by this point, every constraint has been met    
+    metrics = collect_all_metrics(root)
     
-    return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha}
+    return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha, "metrics": metrics}

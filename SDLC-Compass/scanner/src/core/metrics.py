@@ -19,8 +19,6 @@ Princípios:
 - Não executar código do repositório analisado (só se lê texto; só comandos Git de leitura).
 - Não ler nem devolver valores de segredos, tokens ou variáveis de ambiente
   (URLs/referências diretas em dependências são omitidas; linhas de código nunca são devolvidas).
-- Distinguir métricas diretamente observadas de heurísticas aproximadas:
-  cada coletor devolve "evidence_type" ("observed", "heuristic" ou "mixed") e "limitations".
 - Manter cada coletor pequeno e independente para facilitar testes.
 - Não inferir produtividade individual: nenhum autor/committer é recolhido.
 """
@@ -53,9 +51,9 @@ logger = logging.getLogger(__name__)
 # Constantes de configuração dos coletores
 # ---------------------------------------------------------------------------
 
-DEFAULT_MAX_COMMITS = 20_000        # limite de commits analisados (evita timeouts)
+DEFAULT_MAX_COMMITS = 2_000        # limite de commits analisados (evita timeouts)
 HISTORY_TIMEOUT_SECONDS = 180       # timeout do `git log` completo
-TOP_N_DEFAULT = 20
+TOP_N_DEFAULT = 10
 MAX_LISTED_ITEMS = 200              # limite de itens em listas de evidências
 MAX_COMMITS_LISTED = 500            # limite de commits individuais devolvidos
 LARGE_COMMIT_LINES = 500            # limiar (linhas adicionadas+removidas) para "commit grande"
@@ -211,10 +209,10 @@ class _PathFilter:
 class CommitRecord:
     """Um commit (não-merge) com estatísticas por ficheiro. Sem dados de autor."""
 
-    sha: str
+    #sha: str
     date: str                                  # ISO 8601 (data do committer)
     subject: str
-    reverts_sha: str | None                    # extraído de "This reverts commit <sha>"
+    #reverts_sha: str | None                    # extraído de "This reverts commit <sha>"
     files: tuple[tuple[str, int, int], ...]    # (path, adicionadas, removidas)
     lines_added: int
     lines_deleted: int
@@ -237,7 +235,7 @@ _FIELD_SEP = "\x1f"
 _BODY_END = "\x1d"
 _GIT_LOG_FORMAT = f"%x1e%H%x1f%cI%x1f%s%x1f%b%x1d"
 _REVERTS_RE = re.compile(r"This reverts commit ([0-9a-f]{7,64})")
-_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
+#_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
 
 
 def _load_commit_history(
@@ -269,8 +267,8 @@ def _load_commit_history(
         if len(fields) < 4:
             continue
         sha, date, subject, body = (field.strip() for field in fields)
-        if not _SHA_RE.match(sha):
-            continue
+        #if not _SHA_RE.match(sha):
+        #    continue
 
         files: list[tuple[str, int, int]] = []
         for line in stats.splitlines():
@@ -290,10 +288,10 @@ def _load_commit_history(
 
         reverts = _REVERTS_RE.search(body)
         commits.append(CommitRecord(
-            sha=sha,
+            #sha=sha,
             date=date,
             subject=subject,
-            reverts_sha=reverts.group(1) if reverts else None,
+            #reverts_sha=reverts.group(1) if reverts else None,
             files=tuple(files),
             lines_added=sum(f[1] for f in files),
             lines_deleted=sum(f[2] for f in files),
@@ -315,7 +313,7 @@ def _ensure_history(
 
 def _commit_summary(commit: CommitRecord) -> dict[str, Any]:
     return {
-        "sha": commit.sha,
+        #"sha": commit.sha,
         "date": commit.date,
         "message": _truncate(commit.subject),
         "files_changed": commit.files_changed,
@@ -329,8 +327,6 @@ def _history_window(
 ) -> dict[str, Any]:
     dates = sorted(c.date[:10] for c in commits)
     return {
-        "since": since,
-        "max_commits": max_commits,
         "commits_analyzed": len(commits),
         "truncated_by_max_commits": len(commits) >= max_commits,
         "first_commit_date": dates[0] if dates else None,
@@ -387,7 +383,6 @@ def collect_file_churn(
     top_changed = sum(added[p] + deleted[p] for p in ranking)
 
     return {
-        "evidence_type": "observed",
         "files_with_changes": len(commit_count),
         "lines_added_total": sum(added.values()),
         "lines_deleted_total": sum(deleted.values()),
@@ -417,33 +412,36 @@ def collect_file_churn(
 # ---------------------------------------------------------------------------
 
 DEPENDENCY_MANIFESTS = {
-    "package.json": "Node.js / JavaScript / TypeScript",
+    # JavaScript / TypeScript
+    "package.json": "JavaScript / TypeScript (npm / Node.js)",
+    "package-lock.json": "JavaScript (npm lockfile)",
+    "npm-shrinkwrap.json": "JavaScript (npm lockfile)",
+    "yarn.lock": "JavaScript (Yarn lockfile)",
+    "pnpm-lock.yaml": "JavaScript (pnpm lockfile)",
+
+    # Python
     "requirements.txt": "Python (pip)",
-    "pyproject.toml": "Python (pyproject)",
+    "pyproject.toml": "Python (project / dependencies)",
     "Pipfile": "Python (Pipenv)",
+    "Pipfile.lock": "Python (Pipenv lockfile)",
     "setup.py": "Python (setuptools)",
-    "setup.cfg": "Python (setuptools)",
+    "setup.cfg": "Python (setuptools configuration)",
     "poetry.lock": "Python (Poetry lockfile)",
     "uv.lock": "Python (uv lockfile)",
+    "pdm.lock": "Python (PDM lockfile)",
+
+    # Java
     "pom.xml": "Java (Maven)",
-    "build.gradle": "Gradle",
-    "build.gradle.kts": "Gradle Kotlin DSL",
-    "Cargo.toml": "Rust (Cargo)",
-    "Cargo.lock": "Rust (Cargo lockfile)",
-    "go.mod": "Go modules",
-    "Gemfile": "Ruby (Bundler)",
-    "composer.json": "PHP (Composer)",
-    "Package.swift": "Swift Package Manager",
-    "mix.exs": "Elixir (Mix)",
-    "pubspec.yaml": "Dart / Flutter",
-    "package-lock.json": "Node.js (npm lockfile)",
-    "yarn.lock": "Node.js (Yarn lockfile)",
-    "pnpm-lock.yaml": "Node.js (pnpm lockfile)",
+    "build.gradle": "Java (Gradle)",
+    "build.gradle.kts": "Java (Gradle Kotlin DSL)",
+    "settings.gradle": "Java (Gradle settings)",
+    "settings.gradle.kts": "Java (Gradle Kotlin settings)",
+    "gradle.lockfile": "Java (Gradle dependency lockfile)",
 }
 
 _REQUIREMENTS_NAME_RE = re.compile(r"^requirements[-_.\w]*\.txt$", re.IGNORECASE)
 
-KNOWN_FRAMEWORKS = {
+""" KNOWN_FRAMEWORKS = {
     # Python
     "django": "Django", "flask": "Flask", "fastapi": "FastAPI", "sqlalchemy": "SQLAlchemy",
     "celery": "Celery", "pydantic": "Pydantic", "pytest": "pytest", "pandas": "pandas",
@@ -459,10 +457,70 @@ KNOWN_FRAMEWORKS = {
     # JVM
     "spring-boot-starter": "Spring Boot", "spring-boot-starter-web": "Spring Boot",
     "junit": "JUnit", "junit-jupiter": "JUnit 5", "hibernate-core": "Hibernate",
-    # Go / Rust / Ruby / PHP
-    "github.com/gin-gonic/gin": "Gin", "github.com/labstack/echo": "Echo",
-    "tokio": "Tokio", "actix-web": "Actix Web", "axum": "Axum", "serde": "Serde",
-    "rails": "Rails", "sinatra": "Sinatra", "laravel/framework": "Laravel",
+} """
+
+KNOWN_FRAMEWORKS = {
+    # Python: frameworks e bibliotecas
+    "django": "Django",
+    "flask": "Flask",
+    "fastapi": "FastAPI",
+    "starlette": "Starlette",
+    "sqlalchemy": "SQLAlchemy",
+    "celery": "Celery",
+    "pydantic": "Pydantic",
+    "pytest": "pytest",
+    "pandas": "pandas",
+    "numpy": "NumPy",
+    "torch": "PyTorch",
+    "tensorflow": "TensorFlow",
+    "scikit-learn": "scikit-learn",
+    "langchain": "LangChain",
+    "openai": "OpenAI SDK",
+    "anthropic": "Anthropic SDK",
+
+    # JavaScript / TypeScript
+    "react": "React",
+    "react-dom": "React",
+    "next": "Next.js",
+    "vue": "Vue",
+    "nuxt": "Nuxt",
+    "svelte": "Svelte",
+    "@angular/core": "Angular",
+    "express": "Express",
+    "@nestjs/core": "NestJS",
+    "koa": "Koa",
+    "fastify": "Fastify",
+    "jest": "Jest",
+    "vitest": "Vitest",
+    "cypress": "Cypress",
+    "playwright": "Playwright",
+    "@playwright/test": "Playwright",
+    "typescript": "TypeScript",
+    "vite": "Vite",
+    "webpack": "Webpack",
+    "eslint": "ESLint",
+
+    # Java / JVM
+    "org.springframework.boot:spring-boot-starter":
+        "Spring Boot",
+    "org.springframework.boot:spring-boot-starter-web":
+        "Spring Boot",
+    "org.springframework:spring-webmvc":
+        "Spring MVC",
+    "org.hibernate.orm:hibernate-core":
+        "Hibernate",
+    "org.hibernate:hibernate-core":
+        "Hibernate",
+    "org.junit.jupiter:junit-jupiter":
+        "JUnit 5",
+    "junit:junit":
+        "JUnit 4",
+    "org.mockito:mockito-core":
+        "Mockito",
+    "io.quarkus:quarkus-core":
+        "Quarkus",
+    "io.micronaut:micronaut-core":
+        "Micronaut",
 }
 
 
@@ -593,7 +651,7 @@ def _deps_pipfile(text: str) -> list[dict[str, Any]]:
             + _toml_table_deps(data.get("dev-packages"), "dev"))
 
 
-def _deps_cargo(text: str) -> list[dict[str, Any]]:
+""" def _deps_cargo(text: str) -> list[dict[str, Any]]:
     data = _toml_loads(text) or {}
     deps: list[dict[str, Any]] = []
     for section, scope in (("dependencies", "runtime"), ("dev-dependencies", "dev"),
@@ -602,7 +660,7 @@ def _deps_cargo(text: str) -> list[dict[str, Any]]:
     workspace = data.get("workspace") or {}
     deps += _toml_table_deps(workspace.get("dependencies"), "workspace")
     return deps
-
+ """
 
 def _pom_tag(block: str, tag: str) -> str | None:
     match = re.search(rf"<{tag}>\s*([^<]+?)\s*</{tag}>", block)
@@ -641,7 +699,7 @@ def _deps_gradle(text: str) -> list[dict[str, Any]]:
     ]
 
 
-def _deps_go_mod(text: str) -> list[dict[str, Any]]:
+""" def _deps_go_mod(text: str) -> list[dict[str, Any]]:
     deps: list[dict[str, Any]] = []
     in_block = False
     for raw in text.splitlines():
@@ -661,7 +719,7 @@ def _deps_go_mod(text: str) -> list[dict[str, Any]]:
         if len(parts) >= 2:
             deps.append(_dep(parts[0], parts[1], "indirect" if indirect else "direct"))
     return deps
-
+ """
 
 _GEM_RE = re.compile(r"""^\s*gem\s+["']([^"']+)["'](?:\s*,\s*["']([^"']+)["'])?""", re.MULTILINE)
 
@@ -690,14 +748,14 @@ def _manifest_parser(path: Path):
         return _deps_pyproject
     if name == "Pipfile":
         return _deps_pipfile
-    if name == "Cargo.toml":
-        return _deps_cargo
+    """ if name == "Cargo.toml":
+        return _deps_cargo """
     if name == "pom.xml":
         return _deps_pom
     if name in {"build.gradle", "build.gradle.kts"}:
         return _deps_gradle
-    if name == "go.mod":
-        return _deps_go_mod
+    """ if name == "go.mod":
+        return _deps_go_mod """
     if name == "Gemfile":
         return _deps_gemfile
     if _manifest_ecosystem(path) == "Python (pip)":
@@ -747,7 +805,6 @@ def collect_frameworks_dependencies(
         manifests.append(entry)
 
     return {
-        "evidence_type": "observed",
         "manifest_count": len(manifests),
         "ecosystems": dict(ecosystems.most_common()),
         "unique_dependencies_count": len(all_names),
@@ -774,47 +831,6 @@ LANGUAGE_BY_EXTENSION = {
     ".ts": "TypeScript",
     ".tsx": "TypeScript/TSX",
     ".java": "Java",
-    ".kt": "Kotlin",
-    ".kts": "Kotlin",
-    ".go": "Go",
-    ".rs": "Rust",
-    ".c": "C",
-    ".h": "C/C++ Header",
-    ".cpp": "C++",
-    ".cc": "C++",
-    ".cxx": "C++",
-    ".hpp": "C++ Header",
-    ".cs": "C#",
-    ".php": "PHP",
-    ".rb": "Ruby",
-    ".swift": "Swift",
-    ".m": "Objective-C",
-    ".mm": "Objective-C++",
-    ".scala": "Scala",
-    ".sh": "Shell",
-    ".bash": "Shell",
-    ".ps1": "PowerShell",
-    ".sql": "SQL",
-    ".html": "HTML",
-    ".css": "CSS",
-    ".scss": "SCSS",
-    ".vue": "Vue",
-    ".svelte": "Svelte",
-    ".dart": "Dart",
-    ".ex": "Elixir",
-    ".exs": "Elixir",
-    ".erl": "Erlang",
-    ".hs": "Haskell",
-    ".lua": "Lua",
-    ".pl": "Perl",
-    ".r": "R",
-    ".jl": "Julia",
-    ".xml": "XML",
-    ".yaml": "YAML",
-    ".yml": "YAML",
-    ".toml": "TOML",
-    ".json": "JSON",
-    ".md": "Markdown",
 }
 
 # Extensões de dados/markup que não contam como "código" em rácios.
@@ -832,13 +848,11 @@ def collect_files_by_language(
 
     total = sum(counts.values())
     return {
-        "evidence_type": "heuristic",
         "files_by_language": dict(counts.most_common()),
         "share_by_language": {lang: round(n / total, 4) for lang, n in counts.most_common()} if total else {},
         "recognized_source_files": total,
         "limitations": (
-            "Classificação por extensão; inclui linguagens de dados/markup (JSON, YAML, "
-            "Markdown…) e não identifica extensões desconhecidas."
+            "Classificação por extensão e não identifica extensões desconhecidas."
         ),
     }
 
@@ -913,7 +927,6 @@ def collect_cicd_configuration(
             quality.append(relative)
 
     return {
-        "evidence_type": "heuristic",
         "ci_systems_detected": sorted(by_system),
         "ci_config_files_count": sum(len(v) for v in by_system.values()),
         "ci_config_files_by_system": {k: sorted(v) for k, v in sorted(by_system.items())},
@@ -928,7 +941,7 @@ def collect_cicd_configuration(
 
 
 # ---------------------------------------------------------------------------
-# ======= 05 · INVENTÁRIO DE TESTES (test_inventory) =======
+# ======= 05 · INVENTÁRIO DE TESTES (test_inventory) =======  PRECISA DE AJUSTEs, ADICIONAR MAIS TIPOS DE TESTES
 # ---------------------------------------------------------------------------
 
 TEST_PATH_MARKERS = {
@@ -1012,7 +1025,6 @@ def collect_test_inventory(
     by_type = Counter(tests.values())
     ordered = sorted(tests.items())
     return {
-        "evidence_type": "heuristic",
         "test_files_count": len(tests),
         "test_files_by_type": dict(by_type),
         "test_files": [{"file": f, "type": t} for f, t in ordered[:MAX_LISTED_ITEMS]],
@@ -1059,7 +1071,6 @@ def collect_commit_churn(
     largest = sorted(measured, key=lambda c: c.lines_changed, reverse=True)[:TOP_N_DEFAULT]
 
     return {
-        "evidence_type": "observed",
         "commits_measured": len(measured),
         "commits_without_measurable_changes": len(commits) - len(measured),
         "lines_changed_per_commit": _distribution([c.lines_changed for c in measured]),
@@ -1111,23 +1122,24 @@ def collect_fixes_and_reverts(
             fixes_by_month[commit.month] += 1
             if len(fix_evidence) < MAX_LISTED_ITEMS:
                 fix_evidence.append({
-                    "sha": commit.sha, "date": commit.date,
+                    #"sha": commit.sha, 
+                    "date": commit.date,
                     "message": _truncate(commit.subject),
                     "matched_term": fix_match.group(0).lower(),
                 })
-        if REVERT_SUBJECT_RE.search(commit.subject) or commit.reverts_sha:
+        if REVERT_SUBJECT_RE.search(commit.subject): #or commit.reverts_sha:
             revert_count += 1
             reverts_by_month[commit.month] += 1
             if len(revert_evidence) < MAX_LISTED_ITEMS:
                 revert_evidence.append({
-                    "sha": commit.sha, "date": commit.date,
+                    #"sha": commit.sha, 
+                    "date": commit.date,
                     "message": _truncate(commit.subject),
-                    "reverted_sha": commit.reverts_sha,
+                    #"reverted_sha": commit.reverts_sha,
                 })
 
     total = len(commits)
     return {
-        "evidence_type": "heuristic",
         "commits_analyzed": total,
         "fix_commits": fix_count,
         "fix_ratio": round(fix_count / total, 4) if total else None,
@@ -1195,7 +1207,6 @@ def collect_component_activity(
     ranked = sorted(stats.items(),
                     key=lambda kv: kv[1]["lines_added"] + kv[1]["lines_deleted"], reverse=True)
     return {
-        "evidence_type": "mixed",
         "components_total": len(stats),
         "components": [
             {
@@ -1299,7 +1310,6 @@ def collect_documentation_inventory(
         commits_touching_docs += touched
 
     return {
-        "evidence_type": "heuristic",
         "documentation_files_count": len(docs),
         "files_by_category": dict(by_category.most_common()),
         "documentation_files": [
@@ -1357,7 +1367,6 @@ def collect_technical_debt_markers(
                     occurrences.append({"marker": marker, "file": relative, "line": line_number})
 
     return {
-        "evidence_type": "observed",
         "marker_counts": dict(counts),
         "total_markers": sum(counts.values()),
         "files_with_markers": len(per_file),
@@ -1376,7 +1385,7 @@ def collect_technical_debt_markers(
 # Presença de Docker, Kubernetes e infraestrutura como código.
 # ---------------------------------------------------------------------------
 
-INFRA_FILE_NAMES = {
+""" INFRA_FILE_NAMES = {
     "Dockerfile",
     "docker-compose.yml",
     "docker-compose.yaml",
@@ -1388,6 +1397,70 @@ INFRA_FILE_NAMES = {
     "variables.tf",
     "cloudformation.yaml",
     "cloudformation.yml",
+} """
+
+INFRA_FILE_NAMES = {
+    # Docker / Containers
+    "Dockerfile",
+    "Containerfile",
+    ".dockerignore",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
+
+    # Kubernetes
+    "deployment.yaml",
+    "deployment.yml",
+    "service.yaml",
+    "service.yml",
+    "statefulset.yaml",
+    "statefulset.yml",
+    "daemonset.yaml",
+    "daemonset.yml",
+    "ingress.yaml",
+    "ingress.yml",
+    "configmap.yaml",
+    "configmap.yml",
+    "namespace.yaml",
+    "namespace.yml",
+    "kustomization.yaml",
+    "kustomization.yml",
+
+    # Helm
+    "Chart.yaml",
+    "values.yaml",
+
+    # Terraform / OpenTofu
+    "main.tf",
+    "variables.tf",
+    "outputs.tf",
+    "providers.tf",
+    "versions.tf",
+    "backend.tf",
+    "terraform.tf",
+    "terraform.tfvars",
+
+    # Ansible
+    "ansible.cfg",
+    "playbook.yml",
+    "playbook.yaml",
+    "inventory.ini",
+
+    # Cloud / Serverless
+    "cloudformation.yaml",
+    "cloudformation.yml",
+    "serverless.yml",
+    "serverless.yaml",
+
+    # Servidores / Reverse proxies
+    "nginx.conf",
+    "httpd.conf",
+    "Caddyfile",
+    "haproxy.cfg",
+
+    # Automatização de ambiente
+    "Vagrantfile",
 }
 
 
@@ -1407,7 +1480,6 @@ def collect_infrastructure(
             found.append(relative)
 
     return {
-        "evidence_type": "heuristic",
         "infrastructure_files_count": len(set(found)),
         "infrastructure_files": sorted(set(found))[:MAX_LISTED_ITEMS],
     }
