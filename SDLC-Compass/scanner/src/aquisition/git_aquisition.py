@@ -1,19 +1,9 @@
 """
-git_extract: clone a remote git repository into the scanner's tmp directory.
+git_aquisition: clone a repository from github, and check constraints.
+                if correct cloning, pass through constraings, and return a failed signal otherwise
+                if pass all constraints, then return an ok signal.
+                if not, remove cloned repo, and return a failed signal.
 
-What this module does
-  * validates and normalises the repository URL (https only, allow-listed hosts)
-  * clones the FULL history (git log / blame / tags are needed by the collectors)
-  * keeps the access token out of argv, logs, URLs and .git/config
-  * never executes anything from the cloned repository
-  * returns light metadata about the clone (HEAD sha, branch, commit count...)
-
-What it does NOT do (yet): run the collectors. The API layer calls
-`clone_repository()`, hands `CloneResult.path` to the collectors and finally
-calls `cleanup_clone()`.
-
-Location: scanner/src/services/git_extract.py (with an __init__.py)
-Requires: git >= 2.31 (the token is passed via GIT_CONFIG_COUNT/KEY/VALUE).
 """
 
 from __future__ import annotations
@@ -33,6 +23,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ..config import settings
+from ..models.clone_result import CloneResult
+from ..models.constraint_output import ConstraintOutput, Result
+
+from ..security.constraints import git_repo_count_constraint, git_repo_depth_constraint
 
 logger = logging.getLogger(__name__)
 
@@ -73,23 +67,6 @@ class EmptyRepository(GitExtractError):
 
 class GitNotInstalled(GitExtractError):
     kind = "git_missing"
-
-
-# ---------------------------------------------------------------------------
-# Result
-# ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class CloneResult:
-    scan_id: str
-    path: Path               # internal only, do not expose to API clients
-    repo_url: str            # normalised, never contains credentials
-    head_sha: str
-    branch: str | None       # None when HEAD is detached
-    commits_total: int
-    is_shallow: bool
-    tracked_files: int       # raw `git ls-files` count, before scanner filters
-    exceeds_poc_limit: bool  # tracked_files > settings.poc_max_files
-
 
 # ---------------------------------------------------------------------------
 # URL validation
@@ -277,7 +254,7 @@ def _inspect(dest: Path) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-async def clone_repository(url: str, token: str | None = None) -> CloneResult:
+def clone_repository(scan_id: str, url: str, token: str | None = None) -> CloneResult:
     """Clone `url` (full history) into <tmp_dir>/<scan_id> and return metadata.
 
     Runs git in a worker thread so the event loop is never blocked. This also
@@ -288,7 +265,6 @@ async def clone_repository(url: str, token: str | None = None) -> CloneResult:
     removed before the exception propagates.
     """
     clone_url = normalise_repo_url(url)
-    scan_id = uuid.uuid4().hex
     dest = _tmp_root() / scan_id
 
     def _work() -> CloneResult:
@@ -304,6 +280,7 @@ async def clone_repository(url: str, token: str | None = None) -> CloneResult:
 
         return CloneResult(
             scan_id=scan_id,
+            constraint_output=ConstraintOutput(result=Result.OK, message="ok"),
             path=dest,
             repo_url=clone_url,
             head_sha=str(info["head_sha"]),
@@ -315,7 +292,35 @@ async def clone_repository(url: str, token: str | None = None) -> CloneResult:
         )
 
     logger.info("Cloning %s into tmp/%s", clone_url, scan_id)
-    return await asyncio.to_thread(_work)
+    return _work()
+
+def aquire_and_validate_repository(scan_id: str, url: str, token: str | None = None) -> CloneResult:
+    result: CloneResult = clone_repository(scan_id, url, token)
+
+    #check for constraints
+    root: Path = settings.tmp_dir / scan_id
+
+    count_constraint: ConstraintOutput = git_repo_count_constraint(root)
+    if count_constraint.result != Result.OK:
+        try:
+            cleanup_dir(root)
+        except Exception as e:
+            logger.error(f"Failed to remove tmp. dir. {root}. Exception raised: {e}")
+            
+        result.constraint_output = count_constraint
+        return result
+    
+    depth_constraint: ConstraintOutput = git_repo_depth_constraint(root)
+    if depth_constraint.result != Result.OK:
+        try:
+            cleanup_dir(root)
+        except Exception as e:
+            logger.error(f"Failed to remove tmp. dir. {root}. Exception raised: {e}")
+            
+        result.constraint_output = depth_constraint
+        return result
+
+    return result
 
 
 def _make_writable_and_retry(func, path, _exc) -> None:

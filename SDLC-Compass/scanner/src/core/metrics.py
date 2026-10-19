@@ -25,6 +25,7 @@ Princípios:
 
 from __future__ import annotations
 
+import os
 import json
 import logging
 import re
@@ -256,8 +257,13 @@ def _load_commit_history(
     if since:
         args.append(f"--since={since}")
 
-    raw = _run_git(repo_path, *args, timeout=HISTORY_TIMEOUT_SECONDS, strip=False)
     commits: list[CommitRecord] = []
+
+    if not os.path.exists(repo_path / '.git'):
+        logger.warning(f"Scanned repository '{repo_path}' doesn't have '.git' subfolder.")
+        return commits
+
+    raw = _run_git(repo_path, *args, timeout=HISTORY_TIMEOUT_SECONDS, strip=False)
 
     for chunk in raw.split(_RECORD_SEP):
         if not chunk.strip():
@@ -341,6 +347,15 @@ def _history_window(
 
 def collect_repository_metadata(repo_path: Path) -> dict[str, Any]:
     """Recolhe metadados gerais; parte deles já existe em CloneResult."""
+    if not os.path.exists(repo_path / '.git'):
+        logger.warning(f"Scanned repository '{repo_path}' doesn't have '.git' subfolder.")
+        return {
+            "commits_total": None,
+            "branch": None,
+            "head_sha": None,
+            "is_shallow_clone": None,
+        }
+
     commits_total = _run_git(repo_path, "rev-list", "--count", "HEAD")
     branch = _run_git(repo_path, "branch", "--show-current")
     head_sha = _run_git(repo_path, "rev-parse", "HEAD")
