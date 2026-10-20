@@ -34,6 +34,11 @@ from urllib.parse import urlsplit
 
 from ..config import settings
 
+from ..models.clone_result import CloneResult
+from ..models.constraint_output import ConstraintOutput, Result
+
+from ..security.constraints import git_repo_count_constraint, git_repo_depth_constraint
+
 logger = logging.getLogger(__name__)
 
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -73,22 +78,6 @@ class EmptyRepository(GitExtractError):
 
 class GitNotInstalled(GitExtractError):
     kind = "git_missing"
-
-
-# ---------------------------------------------------------------------------
-# Result
-# ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class CloneResult:
-    scan_id: str
-    path: Path               # internal only, do not expose to API clients
-    repo_url: str            # normalised, never contains credentials
-    head_sha: str
-    branch: str | None       # None when HEAD is detached
-    commits_total: int
-    is_shallow: bool
-    tracked_files: int       # raw `git ls-files` count, before scanner filters
-    exceeds_poc_limit: bool  # tracked_files > settings.poc_max_files
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +266,7 @@ def _inspect(dest: Path) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-async def clone_repository(url: str, token: str | None = None) -> CloneResult:
+def clone_repository(scan_id: str, url: str, token: str | None = None) -> CloneResult:
     """Clone `url` (full history) into <tmp_dir>/<scan_id> and return metadata.
 
     Runs git in a worker thread so the event loop is never blocked. This also
@@ -288,7 +277,6 @@ async def clone_repository(url: str, token: str | None = None) -> CloneResult:
     removed before the exception propagates.
     """
     clone_url = normalise_repo_url(url)
-    scan_id = uuid.uuid4().hex
     dest = _tmp_root() / scan_id
 
     def _work() -> CloneResult:
@@ -304,6 +292,7 @@ async def clone_repository(url: str, token: str | None = None) -> CloneResult:
 
         return CloneResult(
             scan_id=scan_id,
+            constraint_output=ConstraintOutput(result=Result.OK, message="ok"),
             path=dest,
             repo_url=clone_url,
             head_sha=str(info["head_sha"]),
@@ -315,7 +304,7 @@ async def clone_repository(url: str, token: str | None = None) -> CloneResult:
         )
 
     logger.info("Cloning %s into tmp/%s", clone_url, scan_id)
-    return await asyncio.to_thread(_work)
+    return _work()
 
 
 def _make_writable_and_retry(func, path, _exc) -> None:
@@ -336,3 +325,31 @@ def cleanup_dir(path: Path) -> None:
         shutil.rmtree(target, onexc=_make_writable_and_retry)
     else:
         shutil.rmtree(target, onerror=_make_writable_and_retry)
+
+def aquire_and_validate_repository(scan_id: str, url: str, token: str | None = None) -> CloneResult:
+    result: CloneResult = clone_repository(scan_id, url, token)
+
+    #check for constraints
+    root: Path = settings.tmp_dir / scan_id
+
+    count_constraint: ConstraintOutput = git_repo_count_constraint(root)
+    if count_constraint.result != Result.OK:
+        try:
+            cleanup_dir(root)
+        except Exception as e:
+            logger.error(f"Failed to remove tmp. dir. {root}. Exception raised: {e}")
+            
+        result.constraint_output = count_constraint
+        return result
+    
+    depth_constraint: ConstraintOutput = git_repo_depth_constraint(root)
+    if depth_constraint.result != Result.OK:
+        try:
+            cleanup_dir(root)
+        except Exception as e:
+            logger.error(f"Failed to remove tmp. dir. {root}. Exception raised: {e}")
+            
+        result.constraint_output = depth_constraint
+        return result
+
+    return result

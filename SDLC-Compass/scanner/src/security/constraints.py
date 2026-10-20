@@ -59,7 +59,7 @@ def zip_file_depth_constraint(filepath: Path) -> ConstraintOutput:
 def _file_count_in_dir(dirpath: Path) -> int:
     file_count = 0
     
-    print(f"Check file count in {dirpath}")
+    #print(f"Check file count in {dirpath}")
     
     elem_list = os.listdir(dirpath)
     for elem in elem_list:

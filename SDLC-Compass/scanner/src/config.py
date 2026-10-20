@@ -43,6 +43,8 @@ class Settings(BaseSettings):
 
     github_clone_timeout: int = 120 #seconds
 
+    async_max_threads: int = 4
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

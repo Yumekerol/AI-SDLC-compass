@@ -406,7 +406,7 @@ def map_cicd_and_operations(metrics: Metrics) -> SignalGroup:
 # Warnings & Gaps   <- derivado dos restantes grupos já mapeados (ver build_scanner_output)
 
 #map_stack_and_tooling = _not_implemented("Stack & Tooling")
-map_cicd_and_operations = _not_implemented("CI/CD & Operations")
+#map_cicd_and_operations = _not_implemented("CI/CD & Operations")
 map_quality_indicators = _not_implemented("Quality Indicators")
 map_warnings_and_gaps = _not_implemented("Warnings & Gaps")
 
