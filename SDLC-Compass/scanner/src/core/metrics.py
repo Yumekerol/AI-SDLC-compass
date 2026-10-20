@@ -25,7 +25,6 @@ Princípios:
 
 from __future__ import annotations
 
-import os
 import json
 import logging
 import re
@@ -257,13 +256,8 @@ def _load_commit_history(
     if since:
         args.append(f"--since={since}")
 
-    commits: list[CommitRecord] = []
-
-    if not os.path.exists(repo_path / '.git'):
-        logger.warning(f"Scanned repository '{repo_path}' doesn't have '.git' subfolder.")
-        return commits
-
     raw = _run_git(repo_path, *args, timeout=HISTORY_TIMEOUT_SECONDS, strip=False)
+    commits: list[CommitRecord] = []
 
     for chunk in raw.split(_RECORD_SEP):
         if not chunk.strip():
@@ -347,15 +341,6 @@ def _history_window(
 
 def collect_repository_metadata(repo_path: Path) -> dict[str, Any]:
     """Recolhe metadados gerais; parte deles já existe em CloneResult."""
-    if not os.path.exists(repo_path / '.git'):
-        logger.warning(f"Scanned repository '{repo_path}' doesn't have '.git' subfolder.")
-        return {
-            "commits_total": None,
-            "branch": None,
-            "head_sha": None,
-            "is_shallow_clone": None,
-        }
-
     commits_total = _run_git(repo_path, "rev-list", "--count", "HEAD")
     branch = _run_git(repo_path, "branch", "--show-current")
     head_sha = _run_git(repo_path, "rev-parse", "HEAD")
@@ -455,24 +440,6 @@ DEPENDENCY_MANIFESTS = {
 }
 
 _REQUIREMENTS_NAME_RE = re.compile(r"^requirements[-_.\w]*\.txt$", re.IGNORECASE)
-
-""" KNOWN_FRAMEWORKS = {
-    # Python
-    "django": "Django", "flask": "Flask", "fastapi": "FastAPI", "sqlalchemy": "SQLAlchemy",
-    "celery": "Celery", "pydantic": "Pydantic", "pytest": "pytest", "pandas": "pandas",
-    "numpy": "NumPy", "torch": "PyTorch", "tensorflow": "TensorFlow",
-    "scikit-learn": "scikit-learn", "langchain": "LangChain", "openai": "OpenAI SDK",
-    "anthropic": "Anthropic SDK",
-    # JavaScript / TypeScript
-    "react": "React", "next": "Next.js", "vue": "Vue", "nuxt": "Nuxt", "svelte": "Svelte",
-    "@angular/core": "Angular", "express": "Express", "@nestjs/core": "NestJS",
-    "jest": "Jest", "vitest": "Vitest", "cypress": "Cypress", "playwright": "Playwright",
-    "@playwright/test": "Playwright", "typescript": "TypeScript", "vite": "Vite",
-    "webpack": "webpack", "eslint": "ESLint",
-    # JVM
-    "spring-boot-starter": "Spring Boot", "spring-boot-starter-web": "Spring Boot",
-    "junit": "JUnit", "junit-jupiter": "JUnit 5", "hibernate-core": "Hibernate",
-} """
 
 KNOWN_FRAMEWORKS = {
     # Python: frameworks e bibliotecas
@@ -598,7 +565,7 @@ def _deps_package_json(text: str) -> list[dict[str, Any]]:
     return deps
 
 
-def _deps_composer_json(text: str) -> list[dict[str, Any]]:
+""" def _deps_composer_json(text: str) -> list[dict[str, Any]]:
     try:
         data = json.loads(text)
     except ValueError:
@@ -611,7 +578,7 @@ def _deps_composer_json(text: str) -> list[dict[str, Any]]:
                 deps += [_dep(n, v if isinstance(v, str) else None, scope)
                          for n, v in table.items() if n != "php" and not n.startswith("ext-")]
     return deps
-
+ """
 
 def _deps_requirements(text: str) -> list[dict[str, Any]]:
     return [d for d in (_parse_requirement(l, "runtime") for l in text.splitlines()) if d]
@@ -736,12 +703,12 @@ def _deps_gradle(text: str) -> list[dict[str, Any]]:
     return deps
  """
 
-_GEM_RE = re.compile(r"""^\s*gem\s+["']([^"']+)["'](?:\s*,\s*["']([^"']+)["'])?""", re.MULTILINE)
+#_GEM_RE = re.compile(r"""^\s*gem\s+["']([^"']+)["'](?:\s*,\s*["']([^"']+)["'])?""", re.MULTILINE)
 
 
-def _deps_gemfile(text: str) -> list[dict[str, Any]]:
+""" def _deps_gemfile(text: str) -> list[dict[str, Any]]:
     return [_dep(m.group(1), m.group(2), "runtime") for m in _GEM_RE.finditer(text)]
-
+ """
 
 def _manifest_ecosystem(path: Path) -> str | None:
     if path.name in DEPENDENCY_MANIFESTS:
@@ -757,8 +724,8 @@ def _manifest_parser(path: Path):
     name = path.name
     if name == "package.json":
         return _deps_package_json
-    if name == "composer.json":
-        return _deps_composer_json
+    """ if name == "composer.json":
+        return _deps_composer_json """
     if name == "pyproject.toml":
         return _deps_pyproject
     if name == "Pipfile":
@@ -771,22 +738,35 @@ def _manifest_parser(path: Path):
         return _deps_gradle
     """ if name == "go.mod":
         return _deps_go_mod """
-    if name == "Gemfile":
-        return _deps_gemfile
+    """ if name == "Gemfile":
+        return _deps_gemfile """
     if _manifest_ecosystem(path) == "Python (pip)":
         return _deps_requirements
     return None   # lockfiles e manifestos sem parser: apenas listados
 
 
+def _normalize(name: str) -> str:
+    """Minúsculas e '_' -> '-' (scikit_learn == scikit-learn). Mantém '.' e ':' das coordenadas Maven."""
+    return name.strip().lower().replace("_", "-")
+
+
+# prefixo normalizado -> framework (cobre starters, módulos e pacotes com scope)
+_FRAMEWORK_PREFIXES = (
+    ("org.springframework.boot:", "Spring Boot"),
+    ("@angular/", "Angular"),
+    ("@nestjs/", "NestJS"),
+)
+
+
 def _detect_frameworks(names: set[str]) -> list[str]:
     found: set[str] = set()
     for name in names:
-        key = name.lower()
-        for candidate in (key, key.split(":")[-1]):
-            if candidate in KNOWN_FRAMEWORKS:
-                found.add(KNOWN_FRAMEWORKS[candidate])
-        if key.startswith("org.springframework.boot:"):
-            found.add("Spring Boot")
+        key = _normalize(name)
+        if key in KNOWN_FRAMEWORKS:
+            found.add(KNOWN_FRAMEWORKS[key])
+        for prefix, label in _FRAMEWORK_PREFIXES:
+            if key.startswith(prefix):
+                found.add(label)
     return sorted(found)
 
 
@@ -855,19 +835,43 @@ NON_CODE_EXTENSIONS = {".md", ".json", ".yaml", ".yml", ".toml", ".xml", ".html"
 def collect_files_by_language(
     repo_path: Path, files: list[Path] | None = None
 ) -> dict[str, Any]:
-    counts: Counter[str] = Counter()
+    files_by_language: Counter[str] = Counter()
+    loc_by_language: Counter[str] = Counter()
+
     for path in _resolve_files(repo_path, files):
         language = LANGUAGE_BY_EXTENSION.get(path.suffix.lower())
-        if language:
-            counts[language] += 1
 
-    total = sum(counts.values())
+        if not language:
+            continue
+
+        files_by_language[language] += 1
+
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            loc_by_language[language] += _count_loc(text, path.suffix.lower())
+        except OSError:
+            continue
+
+    total_files = sum(files_by_language.values())
+    total_loc = sum(loc_by_language.values())
+
     return {
-        "files_by_language": dict(counts.most_common()),
-        "share_by_language": {lang: round(n / total, 4) for lang, n in counts.most_common()} if total else {},
-        "recognized_source_files": total,
+        "files_by_language": dict(files_by_language.most_common()),
+        "share_by_language": {
+            lang: round(count / total_files, 4)
+            for lang, count in files_by_language.most_common()
+        } if total_files else {},
+        "loc_by_language": dict(loc_by_language.most_common()),
+        "loc_share_by_language": {
+            lang: round(count / total_loc, 4)
+            for lang, count in loc_by_language.most_common()
+        } if total_loc else {},
+        "recognized_source_files": total_files,
+        "total_loc": total_loc,
         "limitations": (
-            "Classificação por extensão e não identifica extensões desconhecidas."
+            "Classificação por extensão. LOC conta linhas não vazias "
+            "que não começam com os prefixos de comentário definidos "
+            "na heurística; não identifica extensões desconhecidas."
         ),
     }
 
@@ -1396,23 +1400,69 @@ def collect_technical_debt_markers(
 
 
 # ---------------------------------------------------------------------------
+# ======= 11 · TAMANHO E ESTRUTURA (size_and_structure) =======
+# Contagem de ficheiros, LOC aproximado e "módulos" (diretórios com código).
+# ---------------------------------------------------------------------------
+
+def _count_loc(text: str, suffix: str) -> int:
+    """Linhas não vazias que não são só comentário (heurística por prefixo)."""
+    prefixes = ("#",) if suffix == ".py" else ("//", "/*", "*")
+    return sum(
+        1
+        for line in text.splitlines()
+        if (stripped := line.strip()) and not stripped.startswith(prefixes)
+    )
+
+
+def collect_size_and_structure(
+    repo_path: Path, files: list[Path] | None = None
+) -> dict[str, Any]:
+    all_files = _resolve_files(repo_path, files)
+
+    code_files = 0
+    code_files_read = 0
+    unreadable = 0
+    loc_total = 0
+    module_dirs: set[str] = set()
+
+    for path in all_files:
+        suffix = path.suffix.lower()
+        if suffix not in LANGUAGE_BY_EXTENSION or _PathFilter.is_generated(path.name):
+            continue
+        code_files += 1
+
+        relative = _relative_path(repo_path, path)
+        if not _is_test_file(relative):
+            # "." representa a raiz do repositório
+            module_dirs.add(PurePosixPath(relative).parent.as_posix())
+
+        text = _read_text(path)
+        if text is None:
+            unreadable += 1
+            continue
+        loc_total += _count_loc(text, suffix)
+        code_files_read += 1
+
+    return {
+        "total_files": len(all_files),
+        "code_files": code_files,
+        "loc_estimate": loc_total,
+        "avg_file_size_loc": round(loc_total / code_files_read, 2) if code_files_read else None,
+        "module_estimate": len(module_dirs),
+        "code_files_unreadable": unreadable,
+        "limitations": (
+            "total_files conta os ficheiros que passam os filtros das Settings (não o total "
+            "bruto do repositório). LOC = linhas não vazias e sem comentário de linha, só em "
+            "ficheiros de código reconhecidos (inclui testes). Módulo = diretório com pelo "
+            "menos um ficheiro de código que não seja de teste."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # ======= INFRAESTRUTURA (contexto adicional) =======
 # Presença de Docker, Kubernetes e infraestrutura como código.
 # ---------------------------------------------------------------------------
-
-""" INFRA_FILE_NAMES = {
-    "Dockerfile",
-    "docker-compose.yml",
-    "docker-compose.yaml",
-    "compose.yml",
-    "compose.yaml",
-    "Chart.yaml",
-    "terraform.tf",
-    "main.tf",
-    "variables.tf",
-    "cloudformation.yaml",
-    "cloudformation.yml",
-} """
 
 INFRA_FILE_NAMES = {
     # Docker / Containers
@@ -1479,24 +1529,86 @@ INFRA_FILE_NAMES = {
 }
 
 
+COMPOSE_NAMES = {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+K8S_NAMES = {f"{n}.{ext}" for n in ("deployment", "service", "statefulset", "daemonset",
+                                     "ingress", "configmap", "namespace")
+             for ext in ("yaml", "yml")}
+PROXY_NAMES = {"nginx.conf": "Nginx", "httpd.conf": "Apache HTTP Server",
+               "caddyfile": "Caddy", "haproxy.cfg": "HAProxy"}
+
+
+def _is_dockerfile(name: str) -> bool:
+    lower = name.lower()
+    return (lower in {"dockerfile", "containerfile"}
+            or lower.startswith(("dockerfile.", "containerfile."))
+            or lower.endswith((".dockerfile", ".containerfile")))
+
+
+def _iac_tool(name: str, suffix: str, dirs: set[str]) -> str | None:
+    lower = name.lower()
+    if suffix == ".tf" or lower == "terraform.tfvars":
+        return "Terraform"
+    if lower == "chart.yaml":                      # values.yaml sozinho é demasiado genérico
+        return "Helm"
+    if lower in {"kustomization.yaml", "kustomization.yml"}:
+        return "Kustomize"
+    if lower in K8S_NAMES or dirs & {"k8s", "kubernetes"}:
+        return "Kubernetes"
+    if lower in {"ansible.cfg", "playbook.yml", "playbook.yaml", "inventory.ini"}:
+        return "Ansible"
+    if lower in {"cloudformation.yaml", "cloudformation.yml"}:
+        return "CloudFormation"
+    if lower in {"serverless.yml", "serverless.yaml"}:
+        return "Serverless Framework"
+    if lower == "vagrantfile":
+        return "Vagrant"
+    return None
+
+
 def collect_infrastructure(
     repo_path: Path, files: list[Path] | None = None
 ) -> dict[str, Any]:
-    found: list[str] = []
+    found: set[str] = set()
+    container_files: set[str] = set()
+    dockerfiles: set[str] = set()
+    iac_files: dict[str, set[str]] = defaultdict(set)
+    proxies: set[str] = set()
+
     for path in _resolve_files(repo_path, files):
         relative = _relative_path(repo_path, path)
-        parts_lower = {part.lower() for part in path.parts}
-        if (
-            path.name in INFRA_FILE_NAMES
-            or path.suffix.lower() == ".tf"
-            or "k8s" in parts_lower
-            or "kubernetes" in parts_lower
-        ):
-            found.append(relative)
+        dirs = {p.lower() for p in PurePosixPath(relative).parts[:-1]}
+        name, suffix = path.name, path.suffix.lower()
 
+        dockerfile = _is_dockerfile(name)
+        if not (dockerfile or name in INFRA_FILE_NAMES or suffix == ".tf"
+                or dirs & {"k8s", "kubernetes"}):
+            continue
+
+        found.add(relative)
+
+        if dockerfile:
+            dockerfiles.add(relative)
+            container_files.add(relative)
+        elif name.lower() in COMPOSE_NAMES:
+            container_files.add(relative)
+
+        if tool := _iac_tool(name, suffix, dirs):
+            iac_files[tool].add(relative)
+
+        if name.lower() in PROXY_NAMES:
+            proxies.add(PROXY_NAMES[name.lower()])
+
+    ordered = sorted(found)
     return {
-        "infrastructure_files_count": len(set(found)),
-        "infrastructure_files": sorted(set(found))[:MAX_LISTED_ITEMS],
+        "infrastructure_files_count": len(found),
+        "infrastructure_files": ordered[:MAX_LISTED_ITEMS],
+        "infrastructure_files_truncated": len(ordered) > MAX_LISTED_ITEMS,
+        "has_containerization": bool(container_files),
+        "container_files": sorted(container_files)[:MAX_LISTED_ITEMS],
+        "dockerfile_paths": sorted(dockerfiles, key=lambda f: (len(PurePosixPath(f).parts), f))[:MAX_LISTED_ITEMS],
+        "iac_tools": sorted(iac_files),
+        "iac_files_by_tool": {t: sorted(f)[:MAX_LISTED_ITEMS] for t, f in sorted(iac_files.items())},
+        "reverse_proxies": sorted(proxies),
     }
 
 
@@ -1554,5 +1666,7 @@ def collect_all_metrics(
             "documentation_inventory", collect_documentation_inventory, repo_path, files, commits),
         "technical_debt_markers": _safe_collect(
             "technical_debt_markers", collect_technical_debt_markers, repo_path, files),
+        "size_and_structure": _safe_collect(
+            "size_and_structure", collect_size_and_structure, repo_path, files),
         "infrastructure": _safe_collect("infrastructure", collect_infrastructure, repo_path, files),
     }

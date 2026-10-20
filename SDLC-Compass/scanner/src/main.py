@@ -16,7 +16,6 @@ from fastapi import FastAPI
 
 from .config import settings
 from .api import api
-from .core.job_orchestrator import job_handler
 
 logging.basicConfig(
     level=logging.INFO if settings.debug else logging.WARNING,
@@ -28,12 +27,10 @@ logger = logging.getLogger("sdlc_compass")
 async def lifespan(app: FastAPI):
     logger.info("Initializing scanner service...")
     settings.init()
-    job_handler.init()
     logger.info("Scanner service has been started.")
     yield
     logger.info("Cleaning temporary files and closing...")
     settings.close()
-    job_handler.close()
     
 
 app = FastAPI(

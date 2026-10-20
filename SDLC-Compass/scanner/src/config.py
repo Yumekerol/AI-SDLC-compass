@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     tmp_dir: Path | None = None
 
     max_file_size_bytes: int = 1_000_000  # Skip files larger than 1MB
-    poc_max_files: int = 1000  # PoC scope limit
+    poc_max_files: int = 10000  # PoC scope limit
     poc_max_depth: int = 10  # depth limit (to prevent zip bombs), just a safety measure
     excluded_dirs: list[str] = [
         "node_modules", ".git", "__pycache__", ".venv", "venv",
@@ -42,8 +42,6 @@ class Settings(BaseSettings):
     ]
 
     github_clone_timeout: int = 120 #seconds
-
-    async_max_threads: int = 4
 
     class Config:
         env_file = ".env"

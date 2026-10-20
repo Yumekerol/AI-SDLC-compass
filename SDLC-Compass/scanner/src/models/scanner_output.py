@@ -36,6 +36,8 @@ class LanguageBreakdown(BaseModel):
     language: str
     files: int = 0
     percentage: float = 0.0
+    loc: int = 0
+    loc_share : float = 0.0
 
 
 class LanguagesData(BaseModel):
