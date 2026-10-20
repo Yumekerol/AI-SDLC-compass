@@ -1,2 +1,2 @@
-# AI-SLDC-compass
+# AI-SDLC-compass
 
