@@ -17,6 +17,7 @@ from ..models.clone_result import CloneResult
 from ..core.metrics import collect_all_metrics
 
 from ..config import settings
+from ..models.scanner_mapping_output import build_scanner_output
 
 logger = logging.getLogger(__name__)
 
@@ -64,22 +65,11 @@ async def start_scan(file: UploadFile, response: Response):
     root: Path = result.path
     
     metrics = collect_all_metrics(root)
-
-    from ..models.scanner_mapping_output import map_languages, map_size_and_structure, map_stack_and_tooling, map_cicd_and_operations, map_quality_indicators, map_warnings_and_gaps, map_repository, map_scope
-            
-    signalgroup = {
-        #"languages": map_languages(metrics),
-        #"size_and_structure": map_size_and_structure(metrics),
-        #"stack_and_tooling": map_stack_and_tooling(metrics),
-        "cicd_and_operations": map_cicd_and_operations(metrics),
-        #"quality_indicators": map_quality_indicators(metrics),
-        #"warnings_and_gaps": map_warnings_and_gaps(metrics),
-    }
     
-    #return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha, "metrics": metrics}
-    return {"scan_id": result.scan_id, "signalgroup": signalgroup}
+    output = build_scanner_output(metrics, None, scan_id, "git")
         
-    return {"scan_id": result.scan_id, "metrics": metrics}
+    #return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha, "metrics": metrics}
+    return {"signalgroup": output}
 
 
 @router.post("/url")
@@ -101,16 +91,7 @@ async def start_scan(response: Response, url: str, token: str | None = None):
 
     metrics = collect_all_metrics(root)
 
-    from ..models.scanner_mapping_output import map_languages, map_size_and_structure, map_stack_and_tooling, map_cicd_and_operations, map_quality_indicators, map_warnings_and_gaps, map_repository, map_scope
-        
-    signalgroup = {
-        #"languages": map_languages(metrics),
-        #"size_and_structure": map_size_and_structure(metrics),
-        #"stack_and_tooling": map_stack_and_tooling(metrics),
-        "cicd_and_operations": map_cicd_and_operations(metrics),
-        #"quality_indicators": map_quality_indicators(metrics),
-        #"warnings_and_gaps": map_warnings_and_gaps(metrics),
-    }
+    output = build_scanner_output(metrics, clone.repo_url, clone.scan_id, "git")
     
     #return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha, "metrics": metrics}
-    return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha, "signalgroup": signalgroup}
+    return {"signalgroup": output}

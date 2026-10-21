@@ -125,6 +125,35 @@ def _iter_source_files(repo_path: Path):
         yield path
 
 
+def count_excluded_items(repo_path: Path) -> int:
+    """Conta o número de ficheiros excluídos pelos filtros definidos em Settings."""
+
+    excluded_dirs = set(settings.excluded_dirs)
+    excluded_extensions = {
+        ext.lower() for ext in settings.excluded_extensions
+    }
+
+    excluded_count = 0
+
+    for path in repo_path.rglob("*"):
+        if not path.is_file():
+            continue
+
+        relative_parts = path.relative_to(repo_path).parts
+
+        # Ignorar ficheiros dentro de diretórios excluídos.
+        if any(part in excluded_dirs for part in relative_parts[:-1]):
+            excluded_count += 1
+            continue
+
+        # Ignorar extensões excluídas.
+        if path.suffix.lower() in excluded_extensions:
+            excluded_count += 1
+            continue
+
+    return excluded_count
+
+
 def _resolve_files(repo_path: Path, files: list[Path] | None) -> list[Path]:
     """Reutiliza a lista de ficheiros já percorrida (evita várias travessias)."""
     return files if files is not None else list(_iter_source_files(repo_path))
@@ -360,6 +389,20 @@ def collect_repository_metadata(repo_path: Path) -> dict[str, Any]:
 # Ranking de ficheiros por linhas adicionadas+removidas e nº de commits.
 # ---------------------------------------------------------------------------
 
+def get_current_files(repo_path: Path) -> set[str]:
+    """Devolve os paths dos ficheiros existentes no commit atual."""
+
+    result = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    return set(result.stdout.splitlines())
+
+
 def collect_file_churn(
     repo_path: Path,
     commits: list[CommitRecord] | None = None,
@@ -379,7 +422,22 @@ def collect_file_churn(
             commit_count[path] += 1
 
     total_changed = sum(added.values()) + sum(deleted.values())
-    ranking = sorted(commit_count, key=lambda p: added[p] + deleted[p], reverse=True)[:top_n]
+
+    # Obter os ficheiros existentes no commit atual.
+    current_files = get_current_files(repo_path)
+
+    # Excluir do ranking os ficheiros que já foram apagados.
+    ranking_candidates = [
+        p for p in commit_count
+        if p in current_files
+    ]
+
+    ranking = sorted(
+        ranking_candidates,
+        key=lambda p: added[p] + deleted[p],
+        reverse=True,
+    )[:top_n]
+
     top_changed = sum(added[p] + deleted[p] for p in ranking)
 
     return {
@@ -837,6 +895,7 @@ def collect_files_by_language(
 ) -> dict[str, Any]:
     files_by_language: Counter[str] = Counter()
     loc_by_language: Counter[str] = Counter()
+    files_of_code: list[str] = []
 
     for path in _resolve_files(repo_path, files):
         language = LANGUAGE_BY_EXTENSION.get(path.suffix.lower())
@@ -845,6 +904,7 @@ def collect_files_by_language(
             continue
 
         files_by_language[language] += 1
+        files_of_code.append(str(path.relative_to(repo_path)))
 
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -868,6 +928,7 @@ def collect_files_by_language(
         } if total_loc else {},
         "recognized_source_files": total_files,
         "total_loc": total_loc,
+        "files_of_code": files_of_code,
         "limitations": (
             "Classificação por extensão. LOC conta linhas não vazias "
             "que não começam com os prefixos de comentário definidos "
@@ -1044,6 +1105,7 @@ def collect_test_inventory(
     by_type = Counter(tests.values())
     ordered = sorted(tests.items())
     return {
+        "code_files_non_test_count": code_files_non_test,
         "test_files_count": len(tests),
         "test_files_by_type": dict(by_type),
         "test_files": [{"file": f, "type": t} for f, t in ordered[:MAX_LISTED_ITEMS]],
@@ -1154,6 +1216,7 @@ def collect_fixes_and_reverts(
                     #"sha": commit.sha, 
                     "date": commit.date,
                     "message": _truncate(commit.subject),
+                    "matched_term": revert_match.group(0).lower() if (revert_match := REVERT_SUBJECT_RE.search(commit.subject)) else None,
                     #"reverted_sha": commit.reverts_sha,
                 })
 
@@ -1648,6 +1711,7 @@ def collect_all_metrics(
 
     return {
         "repository": _safe_collect("repository", collect_repository_metadata, repo_path),
+        "excluded_items": _safe_collect("excluded_items", count_excluded_items, repo_path),
         "history_window": _history_window(commits, since, max_commits),
         "file_churn": _safe_collect("file_churn", collect_file_churn, repo_path, commits),
         "frameworks_dependencies": _safe_collect(
