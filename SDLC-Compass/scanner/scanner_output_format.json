@@ -1,0 +1,42 @@
+{
+  "comment": "this is purelly a concept output, and can be changed at any time",
+  "status": "string, ok | err, err cause in message",
+  "message": "string, ok | {string}, where ok is used if status is ok, otherwise state reason for error.",
+  "signals": {
+    "languages": {
+      "present": [
+        {
+          "comment": "up to 3 supported languages: Python, JavaScript, Java. found by file extentions (primarily)",
+          "lang": "string: py | js | java",
+          "nfiles": "int: number of files for specified language",
+          "share": "float: percent of files that are of specified lang"
+        }
+      ],
+      "suspected": [
+        {
+          "comment": "optional. if language suspected to be present, but can't be found explicitely, this should be present",
+          "lang": "string: py | js | java",
+          "reason": "string: reason of suspicion",
+          "confidence": "string: high | med | low"
+        }
+      ],
+      "confidence": "string: high | med | low, typically this would be high"
+    },
+    "size": {
+      "filecount": "int: number of files, excluding dependencies, .git, binaries and build files (non-code files basically)",
+      "loc": "int: lines of code (across all files)"
+    },
+    "structure": [],
+    "stack": {},
+    "cicd": {},
+    "ops": {},
+    "docs": {
+      "comment": "only present if documentation is found. README.md counts, but should be specified if its the only present documentation. Search for docs folder",
+      "onlyREADME": "boolean, true if only readme is found",
+      "locations": [
+        "string list, one for each directory where documentation is found. includes '/', '/docs', etc"
+      ]
+    },
+    "tests": {}
+  }
+}

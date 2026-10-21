@@ -1,0 +1,147 @@
+# Métricas Git para identificar oportunidades de integração de AI no SDLC
+#
+# Objetivo
+# Recolher sinais observáveis num repositório Git para ajudar uma LLM a identificar
+# fases do Software Development Life Cycle (SDLC) onde a AI poderá trazer valor.
+#
+# Formato de cada métrica
+# Nome: identificador curto da métrica
+# Recolha: valor ou evidência a extrair do Git/repositório
+# Razão: porque é útil para avaliar oportunidades de AI
+# Interpretação: exemplos de oportunidades que a LLM pode investigar
+#
+# Notas de utilização
+# - As métricas são sinais, não provas de que uma equipa precisa de AI.
+# - Respeitar as exclusões de diretórios, ficheiros e tamanhos definidos na configuração.
+# - Distinguir valores observados de hipóteses geradas pela LLM.
+# - Não inferir produtividade individual a partir de commits.
+# - Evitar enviar segredos, credenciais, dados pessoais ou código confidencial à LLM.
+# - A presença de configurações ou ficheiros não prova que as ferramentas são utilizadas.
+# - Quando possível, combinar estas métricas com dados de PRs, CI/CD, testes e tickets.
+#
+# 01
+Nome: Ficheiros com maior churn (`file_churn`)
+Recolha: Ranking de ficheiros por número total de linhas adicionadas e removidas
+ao longo de um período. Recolher também o número de commits que alteraram cada ficheiro,
+quando possível.
+Razão: Ficheiros com churn elevado podem ser instáveis, complexos ou centrais para o
+produto, sendo potenciais candidatos a melhorias no processo de desenvolvimento.
+Interpretação: Priorizar geração de testes, revisão assistida por AI, explicação de código
+legado ou análise de impacto das alterações. Churn elevado não significa, por si só,
+que exista dívida técnica.
+
+# 02
+Nome: Frameworks e bibliotecas utilizadas (`frameworks_dependencies`)
+Recolha: Identificação das dependências declaradas e respetivas versões a partir de
+manifestos como package.json, pyproject.toml, requirements.txt, pom.xml, build.gradle,
+go.mod, Cargo.toml e ficheiros equivalentes.
+Razão: O ecossistema tecnológico condiciona as sugestões de código, as ferramentas
+disponíveis e as possibilidades de integração de AI.
+Interpretação: Investigar assistência de código contextualizada, geração de componentes,
+migração entre versões, atualização de dependências e explicação de breaking changes.
+As dependências declaradas não garantem que todas sejam efetivamente utilizadas.
+
+# 03
+Nome: Número de ficheiros por linguagem (`files_by_language`)
+Recolha: Contagem de ficheiros por linguagem de programação, com base nas extensões
+reconhecidas e excluindo dependências externas, ficheiros gerados e outros elementos
+definidos nas regras de exclusão.
+Razão: Identifica a composição tecnológica do repositório e ajuda a determinar que
+linguagens e ferramentas devem ser consideradas na análise.
+Interpretação: Identificar oportunidades para assistência de código, geração de testes,
+documentação automática e análise estática adaptadas às linguagens predominantes.
+A classificação por extensão é aproximada e pode não identificar todas as linguagens.
+
+# 04
+Nome: Configuração de CI/CD (`cicd_configuration`)
+Recolha: Deteção de configurações de integração e entrega contínuas, incluindo GitHub
+Actions, GitLab CI, Jenkins, Azure Pipelines, Bitbucket Pipelines e outros sistemas
+equivalentes. Registar os ficheiros e caminhos encontrados.
+Razão: Permite identificar os pontos existentes de automação e possíveis locais de
+integração de funcionalidades de AI no processo de desenvolvimento.
+Interpretação: Investigar AI para explicar falhas de pipelines, resumir erros, sugerir
+correções e apoiar a criação ou manutenção de workflows. A presença de configuração
+não demonstra que os pipelines são executados ou que passam com sucesso.
+
+# 05
+Nome: Inventário e organização de testes (`test_inventory`)
+Recolha: Contagem de ficheiros de teste e identificação aproximada de testes unitários,
+de integração e end-to-end, com base em nomes, diretórios e configurações reconhecidas.
+Registar os caminhos e os tipos de testes identificados.
+Razão: A estrutura de testes fornece contexto sobre as práticas de validação do projeto
+e ajuda a identificar áreas que podem beneficiar de maior apoio.
+Interpretação: Investigar geração de testes, identificação de casos-limite, criação de
+testes de regressão e sugestões de cenários de teste para código alterado.
+A existência de testes não permite concluir qual é a cobertura ou a sua qualidade.
+
+# 06
+Nome: Tamanho das alterações por commit (`commit_churn`)
+Recolha: Para cada commit, recolher a data, a mensagem, o número de ficheiros alterados
+e as linhas adicionadas e removidas. Calcular estatísticas por período, incluindo mediana
+e percentis do tamanho das alterações.
+Razão: Alterações muito grandes podem ser mais difíceis de compreender, validar e rever.
+O histórico também permite observar padrões de evolução do código.
+Interpretação: Investigar resumos automáticos de alterações, explicação de diffs,
+decomposição de alterações grandes e assistência na preparação de revisões de código.
+
+# 07
+Nome: Frequência de correções e reversões (`fixes_and_reverts`)
+Recolha: Contagem de commits cujas mensagens indiquem correções, como fix, bug, hotfix
+ou defect, e identificação de commits de reversão, como revert. Registar as mensagens,
+datas e evidências usadas na classificação.
+Razão: Pode fornecer sinais aproximados sobre a atividade de correção e a ocorrência
+de alterações que precisaram de ser revertidas.
+Interpretação: Investigar AI para triagem de bugs, sugestão de correções, geração de testes
+de regressão e análise de impacto antes da integração. A classificação por mensagens
+é imperfeita e não identifica necessariamente todos os bugs ou reversões.
+
+# 08
+Nome: Frequência de alterações por diretório/componente (`component_activity`)
+Recolha: Número de commits, ficheiros alterados e linhas adicionadas/removidas por
+diretório ou componente, num período definido. Quando possível, considerar também
+a distribuição temporal da atividade.
+Razão: Permite identificar as áreas do repositório que concentram mais alterações e
+compreender onde se encontra a maior parte da atividade de manutenção.
+Interpretação: Priorizar pilotos de AI em componentes com elevada atividade, explorar
+assistência contextualizada por módulo e identificar oportunidades de documentação,
+testes ou análise de impacto.
+
+# 09
+Nome: Inventário de documentação (`documentation_inventory`)
+Recolha: Identificação e contagem de ficheiros de documentação, incluindo README,
+diretórios docs, ADRs, runbooks, guias de instalação e onboarding e changelogs.
+Quando possível, recolher também a frequência de alterações a esses ficheiros.
+Razão: A documentação fornece contexto sobre a arquitetura, os processos e a utilização
+do projeto. A sua distribuição e evolução ajudam a identificar áreas a analisar.
+Interpretação: Investigar geração ou atualização de documentação, criação de notas de
+versão, explicação de arquitetura e apoio ao onboarding. A ausência de documentação
+detetada não prova que não exista documentação noutro sistema.
+
+# 10
+Nome: Sinais de dívida técnica (`technical_debt_markers`)
+Recolha: Contagem de ocorrências de TODO, FIXME, HACK, XXX e marcadores equivalentes,
+registando o ficheiro e a linha onde aparecem. Não é necessário enviar o conteúdo
+completo das linhas para obter a contagem inicial.
+Razão: Estes marcadores podem revelar trabalho adiado, limitações conhecidas ou áreas
+que merecem investigação adicional.
+Interpretação: Investigar AI para agrupar itens semelhantes, explicar o contexto,
+sugerir prioridades e propor passos de resolução. Os marcadores não representam
+uma medida completa da dívida técnica.
+
+#
+# Limites dos dados Git
+# O Git, isoladamente, normalmente não revela com fiabilidade:
+# - duração real das revisões de pull requests ou número de rondas de revisão;
+# - execução, duração e resultados dos pipelines de CI/CD;
+# - cobertura percentual e resultados efetivos dos testes;
+# - incidentes de produção, MTTR, requisitos ou satisfação dos developers.
+# Para estes sinais, integrar fontes adicionais autorizadas quando disponíveis.
+#
+# Instrução sugerida para a LLM
+# "Analisa as métricas e evidências fornecidas. Para cada oportunidade potencial de AI
+# no SDLC, indica: fase do SDLC, problema observado, métrica que sustenta a hipótese,
+# intervenção AI proposta, benefício esperado, riscos, dependências, esforço de
+# implementação, forma de medir o resultado e nível de confiança.
+# Distingue factos observados de hipóteses. Não concluas que existe um problema apenas
+# porque uma métrica tem um valor elevado. Recomenda pilotos pequenos com métricas
+# de baseline e avaliação humana."
