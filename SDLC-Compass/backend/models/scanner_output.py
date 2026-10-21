@@ -36,6 +36,8 @@ class LanguageBreakdown(BaseModel):
     language: str
     files: int = 0
     percentage: float = 0.0
+    loc: int = 0
+    loc_share : float = 0.0
 
 
 class LanguagesData(BaseModel):
@@ -93,25 +95,120 @@ class QualityIndicatorsData(BaseModel):
     test_to_code_file_ratio: float | None = None
     test_file_count: int = 0
     source_file_count: int = 0
-    executed_coverage: float | None = None  # null = not measured
-    has_quality_gate: bool = False
+    #executed_coverage: float | None = None  # null = not measured ISTO È MM FKED DE MEDIR, OU TERIA DE LER O REPO COMPLETO PARA CALCULAR ISTO, O QUE É MUITO PESADO
+    has_quality_gate: bool = False          # OU TERIA DE FZR UNS PARSERS TODOS ESTRANHOS COM CERTAS LIBS, 
     quality_gate_notes: str | None = None
     has_code_style_config: bool = False
     code_style_tools: list[str] = Field(default_factory=list)
 
 
-# ─── Signal Group 6: Warnings & Gaps ──────────────────────────────────
+# ─── Signal Group 6: Technical Debt ──────────────────────────────────
 
-class ScannerWarning(BaseModel):
-    """A warning or gap flag raised by the scanner."""
-    category: str  # e.g., "monitoring", "testing", "documentation"
-    title: str
-    description: str
+class MarkerCount(BaseModel):
+    marker: str                      # TODO, FIXME, HACK, XXX, WORKAROUND
+    count: int = 0
 
 
-class WarningsAndGapsData(BaseModel):
-    """Signals expected but absent, or ambiguous signals requiring confirmation."""
-    warnings: list[ScannerWarning] = Field(default_factory=list)
+class DebtHotspot(BaseModel):
+    file: str
+    markers: int = 0
+
+
+class DebtOccurrence(BaseModel):
+    marker: str
+    file: str
+    line: int
+
+
+class TechnicalDebtData(BaseModel):
+    """Technical debt proxy signals (TODO/FIXME/HACK/XXX/WORKAROUND markers)."""
+    total_markers: int = 0
+    files_with_markers: int = 0
+    marker_counts: list[MarkerCount] = Field(default_factory=list)
+    top_files: list[DebtHotspot] = Field(default_factory=list)
+    occurrences: list[DebtOccurrence] = Field(default_factory=list)
+    occurrences_truncated: bool = False
+
+
+# ─── Signal Group 7: Documentation ──────────────────────────────────
+
+class DocumentationFile(BaseModel):
+    file: str
+    categories: list[str] = Field(default_factory=list)
+
+
+class DocumentationChangedFile(BaseModel):
+    file: str
+    commits: int = 0
+    last_change_date: str | None = None     # YYYY-MM-DD
+
+
+class DocumentationData(BaseModel):
+    """Documentation presence and maintenance signals."""
+    documentation_files_count: int = 0
+
+    # Presença por tipo
+    has_readme: bool = False
+    has_changelog: bool = False
+    has_adr: bool = False
+    has_runbooks: bool = False
+    has_onboarding_docs: bool = False
+    has_docs_directory: bool = False
+
+    files_by_category: dict[str, int] = Field(default_factory=dict)
+    documentation_files: list[DocumentationFile] = Field(default_factory=list)
+
+    # Manutenção (a partir do histórico Git analisado)
+    commits_touching_docs: int = 0
+    share_of_commits: float | None = None          # 0.0 a 1.0; None se não houver histórico
+    most_changed_files: list[DocumentationChangedFile] = Field(default_factory=list)
+
+
+# ─── Signal Group 8: Fixes and Reverts ──────────────────────────────────
+
+class CommitEvidence(BaseModel):
+    """Um commit usado como evidência (sem sha nem autor, por desenho do coletor)."""
+    date: str                                   # ISO 8601
+    message: str
+    matched_term: str | None = None             # só nas correções (fix, bug, hotfix…)
+
+
+class FixesAndRevertsData(BaseModel):
+    """Bug-fix and revert activity inferred from commit messages."""
+    commits_analyzed: int = 0
+
+    fix_commits: int = 0
+    fix_ratio: float | None = None              # 0.0 a 1.0; None se não houver commits
+    fixes_by_month: dict[str, int] = Field(default_factory=dict)      # "YYYY-MM" -> n
+
+    revert_commits: int = 0
+    revert_ratio: float | None = None           # 0.0 a 1.0
+    reverts_by_month: dict[str, int] = Field(default_factory=dict)
+
+    fix_evidence: list[CommitEvidence] = Field(default_factory=list)
+    revert_evidence: list[CommitEvidence] = Field(default_factory=list)
+    evidence_truncated: bool = False
+
+
+# ─── Signal Group 9: File Churn ──────────────────────────────────
+
+class ChurnedFile(BaseModel):
+    """Um ficheiro do ranking de churn."""
+    file: str
+    lines_added: int = 0
+    lines_deleted: int = 0
+    lines_changed: int = 0          # adicionadas + removidas
+    commits: int = 0                # nº de commits que tocaram o ficheiro
+
+
+class FileChurnData(BaseModel):
+    """Files with the most change activity in the analyzed history."""
+    files_with_changes: int = 0
+    lines_added_total: int = 0
+    lines_deleted_total: int = 0
+    lines_changed_total: int = 0
+    top_files_share_of_churn: float | None = None     # 0.0 a 1.0; None se não houve churn
+    top_files: list[ChurnedFile] = Field(default_factory=list)
 
 
 # ─── Generic Signal Group Wrapper ─────────────────────────────────────
@@ -125,7 +222,7 @@ class SignalGroup(BaseModel):
     confidence_source: str = ""
     data: dict = Field(default_factory=dict)
     evidence_paths: list[str] = Field(default_factory=list)
-    user_edited: bool = False
+    #user_edited: bool = False
 
 
 # ─── Complete Scanner Output ──────────────────────────────────────────
@@ -137,6 +234,7 @@ class RepositoryInfo(BaseModel):
     commit_hash: str | None = None
     source_type: str = "git"  # "git" or "zip"
     clone_url: str | None = None
+    scan_id: str | None = None
 
 
 class ScopeAssessment(BaseModel):
@@ -159,10 +257,13 @@ class ScannerOutput(BaseModel):
     repository: RepositoryInfo = Field(default_factory=RepositoryInfo)
     scope: ScopeAssessment = Field(default_factory=ScopeAssessment)
 
-    # The 6 signal groups (matching Figma cards)
+    # The signal groups (matching Figma cards) + extras
     languages: SignalGroup = Field(default_factory=SignalGroup)
     size_and_structure: SignalGroup = Field(default_factory=SignalGroup)
     stack_and_tooling: SignalGroup = Field(default_factory=SignalGroup)
     cicd_and_operations: SignalGroup = Field(default_factory=SignalGroup)
     quality_indicators: SignalGroup = Field(default_factory=SignalGroup)
-    warnings_and_gaps: SignalGroup = Field(default_factory=SignalGroup)
+    technical_debt: SignalGroup = Field(default_factory=SignalGroup)
+    documentation: SignalGroup = Field(default_factory=SignalGroup)
+    fixes_and_reverts: SignalGroup = Field(default_factory=SignalGroup)
+    file_churn: SignalGroup = Field(default_factory=SignalGroup)

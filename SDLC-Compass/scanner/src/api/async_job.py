@@ -51,10 +51,14 @@ def get_job_output(scan_id: str, response: Response):
         return {
             "reason": f"Job with id '{scan_id}' has not been completed yet."
         }
+
+    if job.status == JobStatus.FAILED:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {
+            "reason": job.constraint_output.message
+        }
         
-    return {
-        'data': job.scan_result
-    }
+    return {"signalgroup": job.scan_result}
 
 @router.post('/', status_code = status.HTTP_201_CREATED)
 def _post_scan_dbg(scan_id: str, response: Response):

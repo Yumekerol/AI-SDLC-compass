@@ -87,6 +87,7 @@ class DiagnosticSession(BaseModel):
     access_token: str | None = None  # Optional, for private repos
     consent_given: bool = False
     workspace_path: str | None = None  # Local path to the cloned/extracted repo
+    scan_id: str | None = None
 
     # Step 2: Scanner signals (stored as JSON)
     scanner_output: dict | None = None  # Serialized ScannerOutput

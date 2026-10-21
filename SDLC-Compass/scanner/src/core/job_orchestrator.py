@@ -15,6 +15,7 @@ from ..models.job import Job, JobStatus, RepoKind, URLInput
 from ..models.constraint_output import Result
 from ..models.zip_result import ZipResult
 from ..models.clone_result import CloneResult
+from ..models.scanner_mapping_output import build_scanner_output
 
 from ..aquisition.zip_aquisition import aquire_and_validate_zip
 from ..aquisition.git_aquisition import aquire_and_validate_repository
@@ -152,16 +153,12 @@ class JobHandler():
             root: Path = settings.tmp_dir / scan_id
             metrics = collect_all_metrics(root)
 
-            from ..models.scanner_mapping_output import map_languages, map_size_and_structure, map_stack_and_tooling, map_cicd_and_operations, map_quality_indicators, map_warnings_and_gaps, map_repository, map_scope
+            url = None
+
+            if job.repo_kind == RepoKind.URL:
+                url = job.input.url
                     
-            signalgroup = {
-                #"languages": map_languages(metrics),
-                #"size_and_structure": map_size_and_structure(metrics),
-                #"stack_and_tooling": map_stack_and_tooling(metrics),
-                "cicd_and_operations": map_cicd_and_operations(metrics),
-                #"quality_indicators": map_quality_indicators(metrics),
-                #"warnings_and_gaps": map_warnings_and_gaps(metrics),
-            }
+            signalgroup = build_scanner_output(metrics, url, scan_id, "git")
             
             #return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha, "metrics": metrics}
             #return {"repo": clone.repo_url, "scan_id": clone.scan_id, "head_sha": clone.head_sha, "signalgroup": signalgroup}

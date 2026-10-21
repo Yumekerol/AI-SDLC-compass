@@ -8,6 +8,8 @@ signal overriding (PATCH), and signal confirmation.
 from __future__ import annotations
 
 import logging
+import requests
+import asyncio
 from datetime import datetime
 from pathlib import Path
 
@@ -15,72 +17,72 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel
 
 from ..config import settings
-from ..ingestion.github_ingestion import clone_github_repo
 from ..models.contextual_profile import ContextualProfile
 from ..models.diagnostic_session import DiagnosticSession, SessionStatus, SourceType
 from ..models.scanner_output import ScannerOutput
-from ..scanner.scanner import run_light_scanner
+from ..models.scanner_mapping_output import build_scanner_output
 from ..storage import get_storage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sessions", tags=["Scan & Signals"])
 
-
 async def execute_scan_task(session_id: str):
-    """Background task to clone/extract repo and run Light Scanner."""
     store = await get_storage()
     session = await store.get_session(session_id)
     if not session:
         return
 
     try:
-        workspace_dir = settings.workspaces_dir / session_id
+        api_endpoint: str = f"?scan_id={session.scan_id}"
+        url: str = f"{settings.scanner_url_base}/{api_endpoint}"
 
-        # Clone if git
-        if session.source_type == SourceType.GIT:
-            if not session.git_url:
-                raise ValueError("git_url is missing for git source")
-            session.status = SessionStatus.INGESTING
+        _safety_limit = 100
+
+        for _ in range(0, _safety_limit):
+            response: requests.Response = requests.get(url)
+
+            if response.status_code == status.HTTP_204_NO_CONTENT:
+                # if not finished yet, wait for a bit and then try again
+                # honestly, this is a bit ugly, i just don't know any
+                # other way to make it work
+                _wait_for_sec = 0.5
+                await asyncio.sleep(_wait_for_sec)
+                continue
+
+            body: dict = response.json()
+
+            if response.status_code == status.HTTP_400_BAD_REQUEST:
+                #failed
+                reason: str | None = body.get("reason")
+
+                session.status = SessionStatus.ERROR
+                session.error_message = "Unknown (not specified by scanner)" if reason is None else reason
+                await store.update_session(session)
+
+            _signal_group_raw: dict = body.get("signalgroup")
+
+            from ..models.scanner_mapping_output import build_scanner_output
+            scan_result: ScannerOutput = build_scanner_output(_signal_group_raw)
+
+            session.scanner_output = scan_result.model_dump(mode="json")
+            session.status = SessionStatus.AWAITING_SIGNAL_REVIEW
+            session.error_message = None
             await store.update_session(session)
+    
+            # Initialize profile scanner signals
+            profile = await store.get_profile(session_id)
+            if not profile:
+                profile = ContextualProfile(session_id=session_id)
+            profile.scanner_signals = session.scanner_output
+            profile.last_updated = datetime.utcnow()
+            await store.save_profile(profile)
+    
+            logger.info(f"Scan completed successfully for session {session_id}")
 
-            ws_path, repo_info = clone_github_repo(
-                git_url=session.git_url,
-                target_dir=workspace_dir,
-                access_token=session.access_token,
-            )
-            session.workspace_path = str(ws_path)
-        else:
-            ws_path = Path(session.workspace_path)
-            repo_info = None
-
-        session.status = SessionStatus.SCANNING
-        await store.update_session(session)
-
-        # Run Light Scanner
-        scan_result = run_light_scanner(
-            workspace_path=ws_path,
-            repo_info=repo_info,
-        )
-
-        session.scanner_output = scan_result.model_dump(mode="json")
-        session.status = SessionStatus.AWAITING_SIGNAL_REVIEW
-        session.error_message = None
-        await store.update_session(session)
-
-        # Initialize profile scanner signals
-        profile = await store.get_profile(session_id)
-        if not profile:
-            profile = ContextualProfile(session_id=session_id)
-        profile.scanner_signals = session.scanner_output
-        profile.last_updated = datetime.utcnow()
-        await store.save_profile(profile)
-
-        logger.info(f"Scan completed successfully for session {session_id}")
-
-    except Exception as ex:
-        logger.exception(f"Scan failed for session {session_id}: {ex}")
+    except Exception as e:
+        logger.exception(f"Scan failed for session {session_id}: {e}")
         session.status = SessionStatus.ERROR
-        session.error_message = str(ex)
+        session.error_message = str(e)
         await store.update_session(session)
 
 
