@@ -15,7 +15,7 @@ function goHome() {
       <div class="brand-group" @click="goHome" role="button" tabindex="0" @keydown.enter="goHome">
         <div class="logo-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect width="24" height="24" rx="6" fill="#4F46E5" />
+            <rect width="24" height="24" rx="6" fill="#6D3CC8" />
             <circle cx="12" cy="12" r="7" stroke="#FFFFFF" stroke-width="2" />
             <polygon points="12,7 14.5,12 12,11" fill="#FFFFFF" />
             <polygon points="12,17 9.5,12 12,13" fill="#A5B4FC" />

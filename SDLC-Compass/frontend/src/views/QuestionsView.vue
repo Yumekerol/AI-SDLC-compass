@@ -612,11 +612,11 @@ function goBackToSignals() {
 }
 
 .chat-tab-btn {
-  background: transparent;
+  background-color: #F0EAFB;
   border: none;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #64748b;
+  color: #6D3CC8;
   padding: 0.4375rem 0.875rem;
   border-radius: 6px;
   cursor: pointer;
@@ -626,13 +626,13 @@ function goBackToSignals() {
 }
 
 .chat-tab-btn:hover:not(.tab-active) {
-  color: var(--color-text-primary);
-  background-color: #f1f5f9;
+  color: #5618caff;
+  background-color: #dbcbf8ff;
 }
 
 .chat-tab-btn.tab-active {
   background-color: var(--color-primary);
-  color: #ffffff;
+  color: #F0EAFB;
 }
 
 /* Messages Stream: Fixed height 380px, internal vertical scroll, messages anchored to bottom */
