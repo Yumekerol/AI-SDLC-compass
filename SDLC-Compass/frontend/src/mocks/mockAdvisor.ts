@@ -13,7 +13,8 @@ export const mockAdvisorContext: AdvisorContext = {
       phase: 'Requirements & Design',
       title: 'Requirements & Design',
       status: 'Analyzing',
-      evidenceTokens: ['Jira - notes', 'review sessions', 'ambiguous criteria'],
+      capacityPercent: 30,
+      evidenceTokens: ['Jira · notes', 'review sessions', 'ambiguous criteria'],
       description: 'Examining acceptance criteria coverage, design review cadence and decision documentation.'
     },
     {
@@ -21,6 +22,7 @@ export const mockAdvisorContext: AdvisorContext = {
       phase: 'Code & Refactoring',
       title: 'Code & Refactoring',
       status: 'Analyzing',
+      capacityPercent: 60,
       evidenceTokens: ['api/app', 'repetitive implementation', 'build.yml'],
       description: 'Reviewing code structure, duplication, and the gap between local test execution and CI workflow coverage.'
     },
@@ -29,6 +31,7 @@ export const mockAdvisorContext: AdvisorContext = {
       phase: 'QA & Testing',
       title: 'QA & Testing',
       status: 'Analyzing',
+      capacityPercent: 50,
       evidenceTokens: ['6 test files / 42 source', 'local execution', 'CI gap'],
       description: 'Mapping test presence, regression risk, and the relationship between local test execution and CI workflow coverage.'
     },
@@ -37,6 +40,7 @@ export const mockAdvisorContext: AdvisorContext = {
       phase: 'DevOps & Monitoring',
       title: 'DevOps & Monitoring',
       status: 'Analyzing',
+      capacityPercent: 70,
       evidenceTokens: ['build.yml', 'release checklist', 'external monitoring'],
       description: 'Examining release process maturity, monitoring visibility, and the relationship between repository signals and external workflows.'
     }

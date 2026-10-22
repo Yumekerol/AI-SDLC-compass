@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import * as api from '@/api'
-import type { Question, TopicProgress, UserAnswer, SuggestionChipItem } from '@/types/questions'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import ChatInput from '@/components/chat/ChatInput.vue'
 import TopicsProgress from '@/components/chat/TopicsProgress.vue'
+import { mockAdvisorContext } from '@/mocks'
+import type { SpecialistActivity, UnresolvedKnowledgeGap } from '@/types/advisor'
 
 const router = useRouter()
 const store = useSessionStore()
 
+type TabKey = 'supervisor' | 'requirements' | 'code' | 'testing' | 'devops'
+
 interface DisplayMessage {
   id: string
+  tabId: TabKey
   sender: 'agent' | 'user'
   agentInitial?: string
   agentName: string
@@ -22,26 +25,172 @@ interface DisplayMessage {
   isSkipped?: boolean
 }
 
-const questionsList = ref<Question[]>([])
-const currentQuestionIndex = ref<number>(0)
-const chatMessages = ref<DisplayMessage[]>([])
-const topics = ref<TopicProgress[]>([])
+const tabs = [
+  { id: 'supervisor' as const, label: 'Supervisor' },
+  { id: 'requirements' as const, label: 'Requirements & Design' },
+  { id: 'code' as const, label: 'Code & Refactoring' },
+  { id: 'testing' as const, label: 'QA & Testing' },
+  { id: 'devops' as const, label: 'DevOps & Monitoring' }
+]
 
-// Generic and clearly optional chips — kept minimal to fit arbitrary questions
-const genericChips = computed<SuggestionChipItem[]>(() => [
-  { id: 'c-skip', label: 'Skip this question', value: 'Question skipped by team. Proceed with available repository signals.' },
-  { id: 'c-unsure', label: 'Not sure', value: 'The team is not sure about this — rely on available repository evidence.' },
-  { id: 'c-na', label: 'Not applicable', value: 'This area is not applicable to our current project context.' }
+const activeTab = ref<TabKey>('supervisor')
+const composerInput = ref('')
+const draftSavedMessage = ref('')
+const messagesContainer = ref<HTMLElement | null>(null)
+
+const isMock = computed(() => store.isMock)
+
+// Specialists activity data (defaults to mockAdvisorContext which includes capacityPercent)
+const specialists = ref<SpecialistActivity[]>(
+  JSON.parse(JSON.stringify(mockAdvisorContext.specialists))
+)
+
+// Unresolved knowledge gaps data
+const knowledgeGaps = ref<UnresolvedKnowledgeGap[]>(
+  JSON.parse(JSON.stringify(mockAdvisorContext.unresolvedGaps))
+)
+
+// Multi-tab conversation message threads matching Figma mockups
+const chatMessages = ref<DisplayMessage[]>([
+  // Supervisor tab
+  {
+    id: 'msg-sup-1',
+    tabId: 'supervisor',
+    sender: 'agent',
+    agentInitial: 'S',
+    agentName: 'Supervisor',
+    roleBadge: 'Gathering context',
+    text: 'Atlas Service has 48 code files, FastAPI + React, 6 test files / 42 source files, and a build.yml with a build job but no detected test or deploy job. We\'ll start with ways of working, pain points and AI readiness.',
+    timestamp: '09:41'
+  },
+  {
+    id: 'msg-sup-2',
+    tabId: 'supervisor',
+    sender: 'agent',
+    agentInitial: 'S',
+    agentName: 'Supervisor',
+    roleBadge: 'Context gathered',
+    text: 'The conversation has captured ways of working, pain points and AI readiness. Specialist agents can now examine evidence, flag unresolved gaps, and ask targeted follow-up questions before the diagnostic is generated.',
+    timestamp: '09:50'
+  },
+
+  // Requirements & Design tab
+  {
+    id: 'msg-req-1',
+    tabId: 'requirements',
+    sender: 'agent',
+    agentInitial: 'R',
+    agentName: 'Requirements & Design',
+    roleBadge: 'Needs clarification',
+    text: 'Can you confirm whether acceptance criteria are documented consistently across the team and whether design decisions are captured somewhere the delivery team can reference?',
+    timestamp: '09:42'
+  },
+  {
+    id: 'msg-req-2',
+    tabId: 'requirements',
+    sender: 'user',
+    agentInitial: 'TL',
+    agentName: 'Team representative',
+    roleBadge: 'Response',
+    text: 'We use Scrum. Acceptance criteria are usually documented in Jira, but design decisions are often captured in notes from review sessions and not always linked back to the implementation. We selected ambiguous acceptance criteria and undocumented decisions as pain points.',
+    timestamp: '09:43'
+  },
+
+  // Code & Refactoring tab
+  {
+    id: 'msg-code-1',
+    tabId: 'code',
+    sender: 'agent',
+    agentInitial: 'C',
+    agentName: 'Code & Refactoring',
+    roleBadge: 'Needs clarification',
+    text: 'You mentioned repetitive implementation. Is that mostly in the Python service, the React frontend, or both? Are there any areas where the team feels the codebase is already too complex to refactor without more evidence?',
+    timestamp: '09:44'
+  },
+  {
+    id: 'msg-code-2',
+    tabId: 'code',
+    sender: 'user',
+    agentInitial: 'TL',
+    agentName: 'Team representative',
+    roleBadge: 'Response',
+    text: 'Repetitive implementation is more visible in the Python service. We also selected manual regression and low CI test confidence as pain points because tests run locally, but we expect them to run in CI and have not verified the workflow yet.',
+    timestamp: '09:45'
+  },
+
+  // QA & Testing tab
+  {
+    id: 'msg-qa-1',
+    tabId: 'testing',
+    sender: 'agent',
+    agentInitial: 'Q',
+    agentName: 'QA & Testing',
+    roleBadge: 'Needs clarification',
+    text: 'Are the 6 test files / 42 source files mostly unit tests, integration tests, or end-to-end tests? Does the team rely on any external testing workflows that are not visible in this repository?',
+    timestamp: '09:46'
+  },
+  {
+    id: 'msg-qa-2',
+    tabId: 'testing',
+    sender: 'user',
+    agentInitial: 'TL',
+    agentName: 'Team representative',
+    roleBadge: 'Response',
+    text: 'The test files are mostly unit and integration tests. We do expect CI tests, but the workflow was not verified. Monitoring is managed outside this repository, which is why we also selected noisy alerts and manual release checklist as pain points.',
+    timestamp: '09:47'
+  },
+
+  // DevOps & Monitoring tab
+  {
+    id: 'msg-devops-1',
+    tabId: 'devops',
+    sender: 'agent',
+    agentInitial: 'D',
+    agentName: 'DevOps & Monitoring',
+    roleBadge: 'Needs clarification',
+    text: 'Is the manual release checklist used for every deployment, or only for production? Are there any external monitoring dashboards or alerting rules that the diagnostic should reference before making recommendations?',
+    timestamp: '09:48'
+  },
+  {
+    id: 'msg-devops-2',
+    tabId: 'devops',
+    sender: 'user',
+    agentInitial: 'TL',
+    agentName: 'Team representative',
+    roleBadge: 'Response',
+    text: 'The checklist is mainly used for production. Monitoring lives outside this repository, which is why we mentioned noisy alerts. We are using GitHub Copilot in a pilot and ChatGPT for non-code drafting, but AI adoption is still exploratory.',
+    timestamp: '09:49'
+  }
 ])
+
+const currentTabMessages = computed(() => {
+  return chatMessages.value.filter((m) => m.tabId === activeTab.value)
+})
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+  })
+}
+
+function selectTab(tabKey: TabKey) {
+  activeTab.value = tabKey
+  scrollToBottom()
+}
 
 onMounted(async () => {
   store.ensureSampleSignals()
   store.setStep(3)
 
-  try {
-    questionsList.value = await api.getQuestions()
-  } catch {
-    questionsList.value = []
+  // Real repo adaptation for the initial Supervisor greeting if available
+  if (store.repoSignals && !isMock.value) {
+    const s = store.repoSignals
+    const supMsg = chatMessages.value.find((m) => m.id === 'msg-sup-1')
+    if (supMsg) {
+      supMsg.text = `${s.repoName} has ${s.totalSupportedFiles} code files, ${s.stack.frameworks.join(' + ') || 'modern frameworks'}, ${s.quality.testFilesCount} test files / ${s.quality.sourceFilesCount} source files. We'll start with ways of working, pain points and AI readiness.`
+    }
   }
 
   // Real backend initialization if connected
@@ -49,22 +198,29 @@ onMounted(async () => {
     try {
       const diagRes = await api.backendClient.startDiagnostic(store.sessionId)
       if (diagRes.initial_messages && diagRes.initial_messages.length > 0) {
-        chatMessages.value = diagRes.initial_messages.map((m) => {
+        diagRes.initial_messages.forEach((m) => {
+          let tabId: TabKey = 'supervisor'
           let agentName = m.agent_label || 'Specialist'
           let initial = 'A'
           let roleBadge = 'Specialist agent'
 
           if (m.role === 'supervisor') {
+            tabId = 'supervisor'
             agentName = 'Supervisor'
             initial = 'S'
             roleBadge = 'Gathering context'
           } else if (m.agent_domain) {
             initial = m.agent_domain.charAt(0).toUpperCase()
             roleBadge = `${m.agent_label || 'Specialist'} · Needs clarification`
+            if (m.agent_domain.includes('req')) tabId = 'requirements'
+            else if (m.agent_domain.includes('code')) tabId = 'code'
+            else if (m.agent_domain.includes('test') || m.agent_domain.includes('qa')) tabId = 'testing'
+            else if (m.agent_domain.includes('devops')) tabId = 'devops'
           }
 
-          return {
+          chatMessages.value.push({
             id: m.id,
+            tabId,
             sender: m.role === 'user' ? 'user' : 'agent',
             agentInitial: initial,
             agentName,
@@ -73,134 +229,78 @@ onMounted(async () => {
             timestamp: m.timestamp
               ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
               : '09:41'
-          }
+          })
         })
       }
 
-      await api.backendClient.getKnowledgeGaps(store.sessionId)
-
-      const domains = [
-        { id: 'requirements_design', name: 'Requirements & Design' },
-        { id: 'code_refactoring', name: 'Code & Refactoring' },
-        { id: 'qa_testing', name: 'QA & Testing' },
-        { id: 'devops_monitoring', name: 'DevOps & Monitoring' }
-      ]
-
-      topics.value = domains.map((d) => {
-        const statusObj = diagRes.agent_statuses?.[d.id]
-        let status: 'completed' | 'current' | 'pending' = 'pending'
-        if (statusObj) {
-          if (statusObj.status === 'complete' || statusObj.progress >= 1.0) status = 'completed'
-          else if (statusObj.status === 'waiting_for_input' || statusObj.status === 'analyzing')
-            status = 'current'
+      const gapsRes = await api.backendClient.getKnowledgeGaps(store.sessionId)
+      if (gapsRes && gapsRes.gaps) {
+        const gapList: UnresolvedKnowledgeGap[] = []
+        let idx = 1
+        for (const [domain, descriptions] of Object.entries(gapsRes.gaps)) {
+          if (Array.isArray(descriptions)) {
+            descriptions.forEach((desc: string) => {
+              gapList.push({
+                id: `gap-${idx++}`,
+                title: `${domain.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())} gap`,
+                description: desc,
+                status: 'Open'
+              })
+            })
+          }
         }
-        return {
-          id: d.id,
-          name: d.name,
-          status
+        if (gapList.length > 0) {
+          knowledgeGaps.value = gapList
         }
-      })
-
-      return
+      }
     } catch (err) {
-      console.warn('Backend diagnostic load failed, falling back to local questions:', err)
+      console.warn('Backend diagnostic load failed, falling back to local state:', err)
     }
   }
 
-  // Build initial topics progress for mock flow
-  topics.value = questionsList.value.map((q, idx) => ({
-    id: q.id,
-    name: q.topic,
-    status: idx === 0 ? 'current' : 'pending'
-  }))
-
-  // Initial welcome message from Supervisor
-  chatMessages.value.push({
-    id: 'msg-supervisor-welcome',
-    sender: 'agent',
-    agentInitial: 'S',
-    agentName: 'Supervisor',
-    roleBadge: 'Gathering context',
-    text: `${store.repoSignals?.repoName || 'Atlas Service'} has ${store.repoSignals?.totalSupportedFiles || 48} code files. We will start with ways of working, pain points and AI readiness across the 4 SDLC domains.`,
-    timestamp: '09:41'
-  })
-
-  // Post the first question
-  if (questionsList.value.length > 0) {
-    postAgentQuestion(0)
-  }
+  scrollToBottom()
 })
 
-const currentQuestion = computed<Question | null>(() => {
-  if (currentQuestionIndex.value < questionsList.value.length) {
-    return questionsList.value[currentQuestionIndex.value]
-  }
-  return null
-})
+// Sending message from composer
+async function handleSendMessage() {
+  const text = composerInput.value.trim()
+  if (!text || store.isLoading) return
 
-const isAllAnswered = computed(() => {
-  return currentQuestionIndex.value >= questionsList.value.length
-})
-
-const answeredCount = computed(() => {
-  return store.answersList.length
-})
-
-const totalQuestions = computed(() => {
-  return questionsList.value.length
-})
-
-function getAgentInitial(role: string): string {
-  if (role.includes('Requirements')) return 'R'
-  if (role.includes('Code')) return 'C'
-  if (role.includes('QA')) return 'Q'
-  if (role.includes('DevOps')) return 'D'
-  return 'A'
-}
-
-function postAgentQuestion(index: number) {
-  const q = questionsList.value[index]
-  if (!q) return
-
-  const initial = getAgentInitial(q.agentRole)
-  chatMessages.value.push({
-    id: `msg-question-${q.id}`,
-    sender: 'agent',
-    agentInitial: initial,
-    agentName: q.agentName,
-    roleBadge: `${q.agentRole} · Needs clarification`,
-    text: q.text,
-    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  })
-}
-
-// User submits an answer (via suggestion chip or typed input)
-async function handleUserAnswer(answerText: string) {
-  const activeQ = currentQuestion.value
   const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-  // 1. Append user message to UI
+  // Append user response to active tab thread
   chatMessages.value.push({
     id: `msg-user-${Date.now()}`,
+    tabId: activeTab.value,
     sender: 'user',
+    agentInitial: 'TL',
     agentName: 'Team representative',
     roleBadge: 'Response',
-    text: answerText,
-    timestamp: now,
-    isSkipped: false
+    text,
+    timestamp: now
   })
 
-  // 2. Real backend turn if connected
+  composerInput.value = ''
+  scrollToBottom()
+
+  // Real backend turn if connected
   if (!api.USE_MOCKS && store.sessionId) {
     try {
-      const res = await api.backendClient.sendConversationMessage(store.sessionId, answerText)
+      const res = await api.backendClient.sendConversationMessage(store.sessionId, text)
       if (res.new_messages && res.new_messages.length > 0) {
         res.new_messages.forEach((m) => {
+          let tabId: TabKey = activeTab.value
+          if (m.role === 'supervisor') tabId = 'supervisor'
+          else if (m.agent_domain?.includes('req')) tabId = 'requirements'
+          else if (m.agent_domain?.includes('code')) tabId = 'code'
+          else if (m.agent_domain?.includes('test') || m.agent_domain?.includes('qa')) tabId = 'testing'
+          else if (m.agent_domain?.includes('devops')) tabId = 'devops'
+
           chatMessages.value.push({
             id: m.id,
+            tabId,
             sender: m.role === 'user' ? 'user' : 'agent',
-            agentInitial:
-              m.role === 'supervisor' ? 'S' : m.agent_domain?.charAt(0).toUpperCase() || 'A',
+            agentInitial: m.role === 'supervisor' ? 'S' : m.agent_domain?.charAt(0).toUpperCase() || 'A',
             agentName: m.agent_label || (m.role === 'supervisor' ? 'Supervisor' : 'Specialist Agent'),
             roleBadge: m.role === 'supervisor' ? 'Supervisor synthesis' : 'Specialist clarification',
             text: m.content,
@@ -208,110 +308,38 @@ async function handleUserAnswer(answerText: string) {
           })
         })
       }
-
-      if (res.agent_statuses) {
-        topics.value.forEach((t) => {
-          const st = res.agent_statuses[t.id]
-          if (st) {
-            if (st.status === 'complete' || st.progress >= 1.0) t.status = 'completed'
-            else if (st.status === 'waiting_for_input' || st.status === 'analyzing') t.status = 'current'
-          }
-        })
-      }
-
-      api.backendClient.saveDraft(store.sessionId, chatMessages.value, res.agent_statuses).catch(() => {})
+      scrollToBottom()
     } catch (err) {
       console.warn('Failed to send conversation message to backend:', err)
     }
   }
-
-  // 3. Persist in Pinia store
-  if (activeQ) {
-    const answerPayload: UserAnswer = {
-      questionId: activeQ.id,
-      topic: activeQ.topic,
-      answerText,
-      skipped: false,
-      timestamp: now
-    }
-    await store.recordAnswer(answerPayload)
-  }
-
-  // 4. Mark current topic as completed
-  if (topics.value[currentQuestionIndex.value]) {
-    topics.value[currentQuestionIndex.value].status = 'completed'
-  }
-
-  advanceNextQuestion()
 }
 
-// User skips the question
-async function handleUserSkip() {
-  const activeQ = currentQuestion.value
-  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+function handleKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    handleSendMessage()
+  }
+}
 
-  // 1. Append skipped message to UI
-  chatMessages.value.push({
-    id: `msg-user-skipped-${Date.now()}`,
-    sender: 'user',
-    agentName: 'Team representative',
-    roleBadge: 'Response',
-    text: 'Question skipped. Proceeding without team input on this topic.',
-    timestamp: now,
-    isSkipped: true
-  })
-
-  // 2. Real backend turn if connected
+async function handleSaveDraft() {
+  draftSavedMessage.value = 'Saving...'
   if (!api.USE_MOCKS && store.sessionId) {
     try {
-      await api.backendClient.sendConversationMessage(
-        store.sessionId,
-        'Question skipped by team. Proceed with available repository signals.'
-      )
-    } catch (err) {
-      console.warn('Failed to notify backend of skipped question:', err)
+      await api.backendClient.saveDraft(store.sessionId, chatMessages.value)
+    } catch {
+      // Ignored
     }
   }
-
-  // 3. Persist skipped answer in Pinia store
-  if (activeQ) {
-    await store.skipQuestion(activeQ.id, activeQ.topic)
-  }
-
-  // 4. Mark topic completed (skipped)
-  if (topics.value[currentQuestionIndex.value]) {
-    topics.value[currentQuestionIndex.value].status = 'completed'
-  }
-
-  advanceNextQuestion()
+  setTimeout(() => {
+    draftSavedMessage.value = 'Draft saved'
+    setTimeout(() => {
+      draftSavedMessage.value = ''
+    }, 2000)
+  }, 350)
 }
 
-function advanceNextQuestion() {
-  currentQuestionIndex.value++
-
-  if (currentQuestionIndex.value < questionsList.value.length) {
-    if (topics.value[currentQuestionIndex.value]) {
-      topics.value[currentQuestionIndex.value].status = 'current'
-    }
-    setTimeout(() => {
-      postAgentQuestion(currentQuestionIndex.value)
-    }, 400)
-  } else {
-    setTimeout(() => {
-      chatMessages.value.push({
-        id: 'msg-supervisor-done',
-        sender: 'agent',
-        agentInitial: 'S',
-        agentName: 'Supervisor',
-        roleBadge: 'Context gathered',
-        text: 'All clarification questions are answered! The specialist agents now have sufficient contextual evidence to synthesize a grounded 4-domain SDLC diagnostic.',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      })
-    }, 400)
-  }
-}
-
-// Proceed to diagnostic synthesis
+// Proceed to diagnostic report
 async function handleGenerateDiagnostic() {
   await store.generateDiagnosticReport()
   if (store.hasDiagnostic && !store.error) {
@@ -327,22 +355,29 @@ function goBackToSignals() {
 
 <template>
   <div class="questions-view container">
+    <!-- Top Mock Banner (gated on isMock) -->
+    <div v-if="isMock" class="sample-data-banner">
+      <span class="sample-tag">Sample data</span>
+      Illustrative project, repository signals, team inputs and recommendations. Static preview only.
+    </div>
+
     <!-- Top Step Meta Header -->
     <div class="screen-meta">
-      <span class="step-badge">TEAM DIAGNOSTIC / STEP 3 OF 5</span>
+      <span class="step-badge">TEAM DIAGNOSTIC / STEP 3 OF 4</span>
       <h1 class="page-title">Clarify the team context with the diagnostic agents</h1>
       <p class="page-subtitle">
         The supervisor coordinates questions from four specialist agents. Answer the open questions,
-        review the evidence being examined, and continue until your diagnostic is synthesized.
+        review the evidence being examined, and continue the conversation until the diagnostic is ready.
       </p>
     </div>
 
     <!-- 2-Column Chat & Side Panel Grid -->
     <div class="questions-grid">
-      <!-- Left Column: Interactive Chat Conversation -->
+      <!-- Left Column: Diagnostic conversation, Message composer & Path to diagnostic -->
       <section class="chat-column">
-        <!-- Chat Header Banner -->
+        <!-- 1. Unified Diagnostic Conversation Card -->
         <div class="card chat-card-container">
+          <!-- Chat Header -->
           <div class="chat-header">
             <div>
               <h2 class="chat-box-title">Diagnostic conversation</h2>
@@ -351,71 +386,114 @@ function goBackToSignals() {
             <span class="badge badge-purple">4 active agents</span>
           </div>
 
-          <!-- Messages Stream -->
-          <div class="messages-stream" aria-label="Conversation messages">
-            <ChatMessage
-              v-for="msg in chatMessages"
-              :key="msg.id"
-              :sender="msg.sender"
-              :agent-initial="msg.agentInitial"
-              :agent-name="msg.agentName"
-              :role-badge="msg.roleBadge"
-              :text="msg.text"
-              :timestamp="msg.timestamp"
-              :is-skipped="msg.isSkipped"
-            />
+          <!-- Specialist Navigation Tabs -->
+          <div class="chat-tabs-bar" role="tablist" aria-label="Specialist chat tabs">
+            <button
+              v-for="tab in tabs"
+              :key="tab.id"
+              type="button"
+              role="tab"
+              :aria-selected="activeTab === tab.id"
+              class="chat-tab-btn"
+              :class="{ 'tab-active': activeTab === tab.id }"
+              @click="selectTab(tab.id)"
+            >
+              {{ tab.label }}
+            </button>
           </div>
 
-          <!-- Active Question Composer (Only when questions remain) -->
-          <div v-if="!isAllAnswered && currentQuestion" class="composer-container">
-            <ChatInput
-              :chips="genericChips"
-              :placeholder="currentQuestion?.placeholder || 'Type your team\'s response or context...'"
-              :disabled="store.isLoading"
-              @submit="handleUserAnswer"
-              @skip="handleUserSkip"
-            />
+          <!-- Messages Stream (Fixed height 380px, vertical scroll, anchored to bottom) -->
+          <div
+            ref="messagesContainer"
+            class="messages-stream"
+            aria-label="Conversation messages"
+          >
+            <div class="messages-inner-anchor">
+              <ChatMessage
+                v-for="msg in currentTabMessages"
+                :key="msg.id"
+                :sender="msg.sender"
+                :agent-initial="msg.agentInitial"
+                :agent-name="msg.agentName"
+                :role-badge="msg.roleBadge"
+                :text="msg.text"
+                :timestamp="msg.timestamp"
+                :is-skipped="msg.isSkipped"
+              />
+            </div>
           </div>
 
-          <!-- Completion Banner when all questions answered or skipped -->
-          <div v-else class="all-answered-banner card">
-            <div class="banner-icon-circle" aria-hidden="true">
-              <svg viewBox="0 0 20 20" fill="currentColor">
-                <path
-                  fill-rule="evenodd"
-                  d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-                  clip-rule="evenodd"
-                />
-              </svg>
+          <!-- Input Bar (Separated from messages area by a thin border) -->
+          <div class="chat-input-bar-container">
+            <div class="input-bar-row">
+              <textarea
+                v-model="composerInput"
+                rows="2"
+                class="chat-input-textarea"
+                placeholder="Add a note, ask a question, or clarify a pain point"
+                :disabled="store.isLoading"
+                aria-label="Add a note or response to the agent"
+                @keydown="handleKeyDown"
+              ></textarea>
+              <button
+                type="button"
+                class="btn-primary input-send-btn"
+                :disabled="store.isLoading || !composerInput.trim()"
+                @click="handleSendMessage"
+              >
+                Send
+              </button>
             </div>
-            <div class="banner-body">
-              <h3 class="banner-title">Conversation completed</h3>
-              <p class="banner-desc">
-                Your team context has been integrated with the repository evidence.
-                Generate the diagnostic report to review phase-by-phase recommendations.
-              </p>
+
+            <!-- Small helper text row under the input bar -->
+            <div class="input-helpers-row">
+              <span class="footnote-text">
+                <template v-if="isMock">Sample data · </template>Keep it concise. Do not include personal data, client identifiers, secrets or sensitive source code. Remove sensitive details before submitting.
+              </span>
+              <span class="draft-indicator">Draft saved automatically</span>
             </div>
+          </div>
+        </div>
+
+        <!-- 2. Path to an evolving diagnostic Card (Unchanged separate card below chat) -->
+        <div class="card evolving-card">
+          <h3 class="evolving-title">Path to an evolving diagnostic</h3>
+          <p class="evolving-desc">
+            Continue the conversation, answer follow-up questions, and review specialist findings. The diagnostic will evolve as the team provides more context.
+          </p>
+
+          <div class="evolving-actions">
+            <button type="button" class="btn-secondary" @click="goBackToSignals">
+              Back
+            </button>
+            <button type="button" class="btn-secondary" @click="handleSaveDraft">
+              {{ draftSavedMessage || 'Save draft' }}
+            </button>
             <button
               type="button"
-              class="btn-primary banner-action-btn"
+              class="btn-primary continue-btn"
               :disabled="store.isLoading"
               @click="handleGenerateDiagnostic"
             >
-              Generate diagnostic report
+              Continue diagnostic
             </button>
+          </div>
+
+          <div class="evolving-footer">
+            <span class="footnote-text">
+              <template v-if="isMock">Sample data · </template>The diagnostic is not final. You can keep chatting, question the project, and edit the report before it is shared.
+            </span>
           </div>
         </div>
       </section>
 
-      <!-- Right Column: Topics Side Panel -->
+      <!-- Right Column: Context, Specialist Activity & Knowledge Gaps -->
       <TopicsProgress
-        :topics="topics"
         :signals="store.repoSignals || undefined"
-        :answered-count="answeredCount"
-        :total-count="totalQuestions"
-        :can-generate="answeredCount > 0 || isAllAnswered"
-        @generate="handleGenerateDiagnostic"
-        @back="goBackToSignals"
+        :active-tab="activeTab"
+        :specialists="specialists"
+        :knowledge-gaps="knowledgeGaps"
+        :is-mock="isMock"
       />
     </div>
   </div>
@@ -423,12 +501,31 @@ function goBackToSignals() {
 
 <style scoped>
 .questions-view {
-  padding-top: 2.25rem;
+  padding-top: 1.5rem;
   padding-bottom: 4rem;
 }
 
+/* Top Sample Banner */
+.sample-data-banner {
+  background-color: #faf5ff;
+  border: 1px solid #e9d5ff;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  color: #6b21a8;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sample-tag {
+  font-weight: 700;
+  color: #581c87;
+}
+
 .screen-meta {
-  margin-bottom: 2rem;
+  margin-bottom: 1.75rem;
 }
 
 .step-badge {
@@ -449,37 +546,45 @@ function goBackToSignals() {
 }
 
 .page-subtitle {
-  font-size: 1.0625rem;
+  font-size: 1rem;
   color: var(--color-text-secondary);
-  max-width: 780px;
+  max-width: 820px;
+  line-height: 1.5;
 }
 
 /* 2-Column Grid */
 .questions-grid {
   display: grid;
-  grid-template-columns: 1.7fr 1fr;
-  gap: 2rem;
+  grid-template-columns: 1.65fr 1fr;
+  gap: 1.75rem;
   align-items: start;
 }
 
 .chat-column {
   display: flex;
   flex-direction: column;
+  gap: 1.25rem;
 }
 
+.card {
+  padding: 1.5rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 1. Chat Container */
 .chat-card-container {
-  padding: 1.75rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.125rem;
 }
 
 .chat-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--color-border);
 }
 
 .chat-box-title {
@@ -491,68 +596,158 @@ function goBackToSignals() {
 .chat-box-desc {
   font-size: 0.8125rem;
   color: var(--color-text-muted);
+  margin-top: 0.125rem;
 }
 
-.messages-stream {
+/* Specialist Tabs Bar */
+.chat-tabs-bar {
   display: flex;
-  flex-direction: column;
-  min-height: 380px;
-  max-height: 600px;
+  align-items: center;
+  gap: 0.375rem;
+  background-color: #f8fafc;
+  border: 1px solid #f1f5f9;
+  border-radius: var(--radius-md);
+  padding: 0.25rem;
+  overflow-x: auto;
+}
+
+.chat-tab-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  padding: 0.4375rem 0.875rem;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  min-height: auto;
+}
+
+.chat-tab-btn:hover:not(.tab-active) {
+  color: var(--color-text-primary);
+  background-color: #f1f5f9;
+}
+
+.chat-tab-btn.tab-active {
+  background-color: var(--color-primary);
+  color: #ffffff;
+}
+
+/* Messages Stream: Fixed height 380px, internal vertical scroll, messages anchored to bottom */
+.messages-stream {
+  height: 380px;
   overflow-y: auto;
   padding-right: 0.5rem;
   scroll-behavior: smooth;
+  display: flex;
+  flex-direction: column;
 }
 
-.composer-container {
+.messages-inner-anchor {
   margin-top: auto;
-}
-
-/* All Answered Finish Banner */
-.all-answered-banner {
-  background-color: var(--color-primary-light);
-  border-color: var(--color-primary-border);
-  padding: 1.5rem;
   display: flex;
-  align-items: center;
-  gap: 1.25rem;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.banner-icon-circle {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background-color: var(--color-primary);
-  color: #ffffff;
+/* Integrated Chat Input Bar */
+.chat-input-bar-container {
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.875rem;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-.banner-icon-circle svg {
-  width: 22px;
-  height: 22px;
+.input-bar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
 }
 
-.banner-body {
+.chat-input-textarea {
   flex: 1;
+  min-height: 44px;
+  max-height: 120px;
+  padding: 0.625rem 0.875rem;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  color: var(--color-text-primary);
+  background-color: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  resize: vertical;
+  line-height: 1.45;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.banner-title {
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--color-primary);
-  margin-bottom: 0.25rem;
+.chat-input-textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
 }
 
-.banner-desc {
-  font-size: 0.875rem;
-  color: var(--color-text-secondary);
+.input-send-btn {
+  min-height: 44px;
+  padding: 0.625rem 1.375rem;
+  font-weight: 600;
+}
+
+.input-helpers-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.draft-indicator {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.evolving-footer {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 0.625rem;
+}
+
+.footnote-text {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
   line-height: 1.4;
 }
 
-.banner-action-btn {
-  white-space: nowrap;
+/* 3. Path to Evolving Diagnostic Card */
+.evolving-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.evolving-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.evolving-desc {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
+.evolving-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.continue-btn {
+  font-weight: 600;
 }
 
 @media (max-width: 980px) {
@@ -566,18 +761,14 @@ function goBackToSignals() {
     font-size: 1.75rem;
   }
 
-  .chat-card-container {
-    padding: 1.25rem;
-  }
-
-  .all-answered-banner {
+  .input-bar-row {
     flex-direction: column;
     align-items: stretch;
-    text-align: center;
   }
 
-  .banner-icon-circle {
-    margin: 0 auto;
+  .evolving-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>

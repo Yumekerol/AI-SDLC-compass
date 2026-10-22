@@ -26,6 +26,7 @@ export interface SpecialistActivity {
   status: 'Analyzing' | 'Idle' | 'Updated'
   evidenceTokens: string[]
   description: string
+  capacityPercent?: number
 }
 
 export interface AdvisorContext {
