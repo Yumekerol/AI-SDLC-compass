@@ -33,7 +33,7 @@ async def execute_scan_task(session_id: str):
         return
 
     try:
-        api_endpoint: str = f"?scan_id={session.scan_id}"
+        api_endpoint: str = f"job/?scan_id={session.scan_id}"
         url: str = f"{settings.scanner_url_base}/{api_endpoint}"
 
         _safety_limit = 100
@@ -62,7 +62,7 @@ async def execute_scan_task(session_id: str):
             _signal_group_raw: dict = body.get("signalgroup")
 
             from ..models.scanner_mapping_output import build_scanner_output
-            scan_result: ScannerOutput = build_scanner_output(_signal_group_raw)
+            scan_result: ScannerOutput = build_scanner_output(metrics = _signal_group_raw, url = session.git_url, scan_id = session.scan_id, type = session.source_type)
 
             session.scanner_output = scan_result.model_dump(mode="json")
             session.status = SessionStatus.AWAITING_SIGNAL_REVIEW
@@ -78,6 +78,8 @@ async def execute_scan_task(session_id: str):
             await store.save_profile(profile)
     
             logger.info(f"Scan completed successfully for session {session_id}")
+
+            break
 
     except Exception as e:
         logger.exception(f"Scan failed for session {session_id}: {e}")

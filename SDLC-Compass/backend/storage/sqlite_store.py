@@ -92,10 +92,10 @@ class SQLiteStore(BaseStore):
             cursor.execute("""
                 INSERT OR REPLACE INTO sessions (
                     id, status, source_type, git_url, access_token, consent_given,
-                    workspace_path, scanner_output, signals_confirmed, signals_confirmed_at,
+                    workspace_path, scan_id, scanner_output, signals_confirmed, signals_confirmed_at,
                     conversation, agent_statuses, knowledge_gaps, report,
                     report_generated_at, pdf_path, error_message, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.id,
                 session.status.value if hasattr(session.status, "value") else str(session.status),
@@ -104,6 +104,7 @@ class SQLiteStore(BaseStore):
                 session.access_token,
                 1 if session.consent_given else 0,
                 session.workspace_path,
+                session.scan_id,
                 json.dumps(session.scanner_output, default=str) if session.scanner_output else None,
                 1 if session.signals_confirmed else 0,
                 session.signals_confirmed_at.isoformat() if session.signals_confirmed_at else None,

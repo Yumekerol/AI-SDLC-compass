@@ -44,11 +44,11 @@ async def create_session(request: CreateSessionRequest):
             detail="Privacy and consent must be accepted to initiate code analysis.",
         )
 
-    if request.source_type == SourceType.GIT and not request.git_url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="git_url is required when source_type is 'git'.",
-        )
+    # if request.source_type == SourceType.GIT and not request.git_url:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail="git_url is required when source_type is 'git'.",
+    #     )
 
     store = await get_storage()
     session = DiagnosticSession(
@@ -114,6 +114,48 @@ async def get_session(session_id: str):
     )
 
 
+@router.post("/{session_id}/url")
+async def accept_github_url(session_id: str, url: str, token: str | None = None):
+    store = await get_storage()
+    session = await store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=400, detail="Session not found")
+
+    session.source_type = SourceType.GIT
+    session.git_url = url
+    session.access_token = token
+
+    try:
+        api_endpoint: str = f"job/url"
+        if token is not None:
+            url: str = f"{settings.scanner_url_base}/{api_endpoint}?url={url}&token={token}"
+        else:
+            url: str = f"{settings.scanner_url_base}/{api_endpoint}?url={url}"
+
+        response: requests.Response = requests.post(url=url)
+
+        if response.status_code == status.HTTP_201_CREATED:
+            logger.info(f"Received response from scanner: {response.json()}")
+
+            content: dict = dict(response.json())
+            scan_id: str | None = content.get("scan_id")
+
+            logger.info(f"Extracted scan_id: {scan_id}")
+
+            if scan_id is not None:
+                session.scan_id = scan_id
+
+        await store.update_session(session)
+
+        return {
+            "session_id": session.id,
+            "status": "uploaded",
+        }
+        
+    except Exception as e:
+        logger.exception(f"Unhandled exception in 'accept_github_url': {e}")
+    
+
 @router.post("/{session_id}/upload")
 async def upload_zip_archive(session_id: str, archive: UploadFile = File(...)):
     """Upload a ZIP archive for repository analysis."""
@@ -126,12 +168,15 @@ async def upload_zip_archive(session_id: str, archive: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only .zip files are supported")
 
     temp_zip = settings.data_dir / f"upload_{session_id}.zip"
-    
+
+    logger.info(f"Attempting to copy uploaded file into: {temp_zip}")
     try:
         with open(temp_zip, "wb") as f:
-            shutil.copyfileobj(archive.file, f)
+            content = await archive.read()
+            f.write(content)
 
-        files = {"file": open(temp_zip)}
+        file_obj = open(temp_zip, 'rb')
+        files = {"file": ('file.zip', file_obj,'application/zip')}
 
         api_endpoint: str = f"job/zip"
         url: str = f"{settings.scanner_url_base}/{api_endpoint}"
@@ -158,47 +203,6 @@ async def upload_zip_archive(session_id: str, archive: UploadFile = File(...)):
     finally:
         if temp_zip.exists():
             temp_zip.unlink(missing_ok=True)
-
-
-
-""" @router.post("/{session_id}/upload")
-async def upload_zip_archive(session_id: str, archive: UploadFile = File(...)):
-    # Upload a ZIP archive for repository analysis.
-    store = await get_storage()
-    session = await store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if not archive.content_type == "application/zip": # previsously checked for extention only, but users can LIE!
-        raise HTTPException(status_code=400, detail="Only zip files are supported")
-
-    # Save temp zip
-    target_workspace = settings.workspaces_dir / session_id
-    temp_zip = settings.data_dir / f"upload_{session_id}.zip"
-
-    try:
-        with open(temp_zip, "wb") as f:
-            shutil.copyfileobj(archive.file, f)
-
-        workspace_root, repo_info = extract_zip_archive(
-            zip_path=temp_zip,
-            target_dir=target_workspace,
-            original_filename=archive.filename,
-        )
-
-        session.workspace_path = str(workspace_root)
-        session.source_type = SourceType.ZIP
-        await store.update_session(session)
-
-        return {
-            "session_id": session.id,
-            "filename": archive.filename,
-            "status": "uploaded",
-            "workspace_path": str(workspace_root),
-        }
-    finally:
-        if temp_zip.exists():
-            temp_zip.unlink(missing_ok=True) """
 
 
 class SaveDraftRequest(BaseModel):
