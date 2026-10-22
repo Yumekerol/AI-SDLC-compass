@@ -7,10 +7,11 @@ FastAPI application serving the complete AI-SDLC Compass diagnostic pipeline.
 from __future__ import annotations
 
 import logging
+import requests
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -32,6 +33,17 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing AI-SDLC Compass backend...")
     store = await get_storage()
     logger.info("Storage backend initialized successfully.")
+    logger.info("Attempting to communicate with scanner service...")
+    _safety_limit = 100
+    for _ in range(_safety_limit):
+        try:
+            req: requests.Response = requests.get(f"{settings.scanner_url}/health", timeout=2)
+            if req.status_code == status.HTTP_200_OK:
+                logger.info("Connected successfully to scanner service.")
+                break
+        except:
+            logger.info("Failed to connect, trying again...")
+
     yield
     logger.info("Shutting down AI-SDLC Compass backend...")
     await store.close()

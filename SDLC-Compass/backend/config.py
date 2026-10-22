@@ -36,9 +36,10 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # scanner server info
-    scanner_host: str = "0.0.0.0"
-    scanner_port: int = 8001
-    scanner_url_base: str = f"http://{scanner_host}:{scanner_port}/api/v1"
+    _scanner_host: str = "0.0.0.0"
+    _scanner_port: int = 8001
+    scanner_url: str = f"http://scanner:8001"
+    scanner_url_base: str = f"{scanner_url}/api/v1"
 
     # --- Paths ---
     base_dir: Path = Path(__file__).parent

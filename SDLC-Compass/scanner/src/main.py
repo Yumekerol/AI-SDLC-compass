@@ -55,4 +55,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("scanner.src.main:app", host=settings.host, port=settings.port, reload=True)
+    uvicorn.run(".main:app", host=settings.host, port=settings.port, reload=True)
