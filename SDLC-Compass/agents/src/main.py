@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from .agent import agent_service
 from .config import settings
+from . import pipeline
 
 logging.basicConfig(
     level=logging.INFO if settings.debug else logging.WARNING,
@@ -88,6 +89,64 @@ async def chat_with_agent(req: ChatRequest):
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("answer"))
     return ChatResponse(**result)
+
+
+class PipelineStartRequest(BaseModel):
+    session_id: str
+    repo_path: str
+    team_context: dict[str, Any] = Field(default_factory=dict)
+    scan_output: dict[str, Any] | None = None
+
+
+class PipelineReplyRequest(BaseModel):
+    session_id: str
+    answer: str
+
+
+@app.post("/pipeline/start", tags=["Pipeline"])
+async def pipeline_start(req: PipelineStartRequest):
+    """
+    Run the supervisor -> 4 specialists -> synthesizer pipeline for one
+    diagnostic session, starting fresh. Stops early if a specialist asks the
+    user a clarifying question; call /pipeline/reply with the answer to
+    continue from exactly where it paused.
+    """
+    try:
+        result = await pipeline.run_pipeline(
+            session_id=req.session_id,
+            repo_path=req.repo_path,
+            team_context=req.team_context,
+            scan_output=req.scan_output,
+        )
+    except Exception as e:
+        logger.exception(f"Pipeline start failed for session {req.session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    return result.model_dump(mode="json")
+
+
+@app.post("/pipeline/reply", tags=["Pipeline"])
+async def pipeline_reply(req: PipelineReplyRequest):
+    """
+    Answer the clarifying question a specialist is currently paused on, and
+    continue the pipeline from there.
+    """
+    try:
+        result = await pipeline.resume_pipeline(session_id=req.session_id, answer=req.answer)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Pipeline resume failed for session {req.session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    return result.model_dump(mode="json")
+
+
+@app.get("/pipeline/status", tags=["Pipeline"])
+async def pipeline_status(session_id: str):
+    """Read the current position of a session's pipeline (debugging/reconnect)."""
+    state = pipeline.get_status(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"No pipeline state for session {session_id}")
+    return state
 
 
 def run_cli():

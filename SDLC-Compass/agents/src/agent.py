@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -17,9 +18,20 @@ except ImportError:
     from langgraph.prebuilt import create_react_agent as create_agent
 
 from .config import settings
-from .tools import TOOLS, set_current_repo_root
+from .context import RunContext
+from .tools import build_tools
 
 logger = logging.getLogger(__name__)
+
+
+@tool
+def word_count(text: str) -> int:
+    """Count the number of words in a piece of text.
+    Use this when the user asks how long a piece of writing is,
+    or asks you to count the words in something they've shared.
+    """
+    return len(text.split())
+
 
 SYSTEM_PROMPT = (
     "You are an AI-SDLC Compass Advisor. You help software engineering teams assess their repository "
@@ -32,11 +44,19 @@ SYSTEM_PROMPT = (
 
 
 class AgentService:
-    """Manages LangGraph agent instances and in-memory session threads."""
+    """Manages LangGraph agent instances and in-memory session threads.
+
+    This is the generic, ad-hoc `/chat` advisor only (single cached agent,
+    one shared RunContext mutated per call). The real specialist pipeline
+    (see `runner.py`/`pipeline.py`) builds a fresh, isolated RunContext per
+    run instead, so concurrent specialist runs against different repos can
+    never share state the way this singleton deliberately does.
+    """
 
     def __init__(self):
         self.checkpointer = InMemorySaver()
         self._agent = None
+        self._ctx = RunContext(root=settings.default_workspace_dir)
 
     def get_agent(self):
         """Build or return cached agent graph."""
@@ -46,9 +66,10 @@ class AgentService:
                 base_url=settings.ollama_host,
                 temperature=settings.temperature,
             )
+            tools = list(build_tools(self._ctx).values()) + [word_count]
             self._agent = create_agent(
                 model=model,
-                tools=TOOLS,
+                tools=tools,
                 system_prompt=SYSTEM_PROMPT,
                 checkpointer=self.checkpointer,
             )
@@ -67,7 +88,7 @@ class AgentService:
         if repo_path:
             target_path = Path(repo_path).resolve()
             if target_path.exists():
-                set_current_repo_root(target_path)
+                self._ctx.root = target_path
             else:
                 logger.warning(f"Specified repo_path {target_path} does not exist. Using default.")
 
