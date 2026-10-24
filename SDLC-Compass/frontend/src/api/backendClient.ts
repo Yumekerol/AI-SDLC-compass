@@ -16,7 +16,12 @@ import type {
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api/v1'
 
-/** Report synthesis timeout in ms — configurable via VITE_REPORT_TIMEOUT_MS (default 180 s) */
+/**
+ * Max wait, in ms, for any long-running Agent Service turn — report
+ * synthesis, but also a /diagnose or /conversation call whose background
+ * task may run several specialists back to back before the next pause.
+ * Configurable via VITE_REPORT_TIMEOUT_MS (default 180 s).
+ */
 export const REPORT_TIMEOUT_MS = Number(import.meta.env.VITE_REPORT_TIMEOUT_MS) || 180_000
 
 class ApiError extends Error {
@@ -201,6 +206,41 @@ export async function getConversation(sessionId: string): Promise<BackendConvers
   return request<BackendConversationResponse>(`/sessions/${sessionId}/conversation`, {
     method: 'GET'
   })
+}
+
+/**
+ * Step 3: Poll the conversation until the backend's current turn finishes.
+ * /diagnose and /conversation both return immediately and run the actual
+ * specialist pipeline call in the background (it can take as long as a full
+ * specialist run, or several back to back) — this is how the frontend finds
+ * out when that's done and what was said, the same pattern pollSessionStatus
+ * already uses for the Step 1→2 scan.
+ */
+export async function pollConversation(
+  sessionId: string,
+  onProgress?: (message: string) => void,
+  maxWaitMs = REPORT_TIMEOUT_MS
+): Promise<BackendConversationResponse> {
+  const startTime = Date.now()
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const res = await getConversation(sessionId)
+
+    if (res.status === 'error') {
+      throw new ApiError(
+        res.error_message || 'The diagnostic agents encountered an unexpected error.',
+        'server_error'
+      )
+    }
+    if (!res.processing) {
+      return res
+    }
+
+    onProgress?.('Specialists are reviewing the repository and may ask a clarifying question...')
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+
+  throw new ApiError('Diagnostic conversation timed out waiting for a response.', 'timeout')
 }
 
 /**

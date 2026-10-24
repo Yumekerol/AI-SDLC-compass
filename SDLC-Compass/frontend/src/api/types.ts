@@ -197,6 +197,9 @@ export interface BackendConversationMessage {
 export interface BackendDiagnoseResponse {
   session_id: string
   status: string
+  processing: boolean
+  // Just the welcome message — the actual specialist pipeline runs in the
+  // background. Poll getConversation / pollConversation for what follows.
   initial_messages: BackendConversationMessage[]
   agent_statuses?: Record<string, { status: string; progress: number }>
 }
@@ -205,6 +208,11 @@ export interface BackendConversationResponse {
   session_id: string
   messages: BackendConversationMessage[]
   agent_statuses: Record<string, { status: string; progress: number }>
+  // true while a specialist run / resume / synthesis is in flight on the
+  // backend for this session. pollConversation waits for this to go false.
+  processing: boolean
+  status: string
+  error_message?: string | null
 }
 
 export interface BackendSendMessageRequest {
@@ -214,8 +222,8 @@ export interface BackendSendMessageRequest {
 
 export interface BackendSendMessageResponse {
   session_id: string
+  processing: boolean
   agent_statuses: Record<string, { status: string; progress: number }>
-  new_messages: BackendConversationMessage[]
 }
 
 export interface BackendKnowledgeGapsResponse {

@@ -7,6 +7,7 @@ import ChatMessage from '@/components/chat/ChatMessage.vue'
 import TopicsProgress from '@/components/chat/TopicsProgress.vue'
 import { mockAdvisorContext } from '@/mocks'
 import type { SpecialistActivity, UnresolvedKnowledgeGap } from '@/types/advisor'
+import type { BackendConversationMessage } from '@/api/types'
 
 const router = useRouter()
 const store = useSessionStore()
@@ -49,6 +50,10 @@ const specialists = ref<SpecialistActivity[]>(
 const knowledgeGaps = ref<UnresolvedKnowledgeGap[]>(
   JSON.parse(JSON.stringify(mockAdvisorContext.unresolvedGaps))
 )
+
+// Backend message ids already rendered, so repeated polls (one per turn)
+// never duplicate a bubble that's already on screen.
+const knownMessageIds = new Set<string>()
 
 // Multi-tab conversation message threads matching Figma mockups
 const chatMessages = ref<DisplayMessage[]>([
@@ -180,6 +185,75 @@ function selectTab(tabKey: TabKey) {
   scrollToBottom()
 }
 
+// Maps one backend conversation message onto a display bubble + tab, and
+// appends it if it isn't already on screen. Shared by the initial load and
+// by every poll after a sent message, so a turn that produces several
+// messages (or none, if the pipeline is still mid-specialist) is handled
+// the same way everywhere.
+function ingestBackendMessage(m: BackendConversationMessage, options: { skipUser?: boolean } = {}) {
+  if (knownMessageIds.has(m.id)) return
+  if (options.skipUser && m.role === 'user') return
+
+  let tabId: TabKey = 'supervisor'
+  let agentName = m.agent_label || 'Specialist'
+  let initial = 'A'
+  let roleBadge = 'Specialist agent'
+
+  if (m.role === 'user') {
+    agentName = 'Team representative'
+    initial = 'TL'
+    roleBadge = 'Response'
+  } else if (m.role === 'supervisor') {
+    tabId = 'supervisor'
+    agentName = 'Supervisor'
+    initial = 'S'
+    roleBadge = 'Gathering context'
+  } else if (m.agent_domain) {
+    initial = m.agent_domain.charAt(0).toUpperCase()
+    roleBadge = `${m.agent_label || 'Specialist'} · Needs clarification`
+    if (m.agent_domain.includes('req')) tabId = 'requirements'
+    else if (m.agent_domain.includes('code')) tabId = 'code'
+    else if (m.agent_domain.includes('test') || m.agent_domain.includes('qa')) tabId = 'testing'
+    else if (m.agent_domain.includes('devops')) tabId = 'devops'
+  }
+
+  knownMessageIds.add(m.id)
+  chatMessages.value.push({
+    id: m.id,
+    tabId,
+    sender: m.role === 'user' ? 'user' : 'agent',
+    agentInitial: initial,
+    agentName,
+    roleBadge,
+    text: m.content,
+    timestamp: m.timestamp
+      ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : '09:41'
+  })
+}
+
+async function refreshKnowledgeGaps(sessionId: string) {
+  const gapsRes = await api.backendClient.getKnowledgeGaps(sessionId)
+  const gapList: UnresolvedKnowledgeGap[] = []
+  let idx = 1
+  for (const [domain, descriptions] of Object.entries(gapsRes.gaps || {})) {
+    if (Array.isArray(descriptions)) {
+      descriptions.forEach((desc: string) => {
+        gapList.push({
+          id: `gap-${idx++}`,
+          title: `${domain.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())} gap`,
+          description: desc,
+          status: 'Open'
+        })
+      })
+    }
+  }
+  // Always reflect the real backend's state here, even when empty —
+  // otherwise the sidebar keeps showing the mock placeholder gaps seeded
+  // at the top of this component, which looks like real findings.
+  knowledgeGaps.value = gapList
+}
+
 onMounted(async () => {
   store.ensureSampleSignals()
   store.setStep(3)
@@ -195,66 +269,28 @@ onMounted(async () => {
 
   // Real backend initialization if connected
   if (!api.USE_MOCKS && store.sessionId) {
+    // Replace the mock-seeded conversation entirely — see the matching fix
+    // on knowledgeGaps below for why we don't just leave it standing.
+    chatMessages.value = []
+    knownMessageIds.clear()
+    store.isLoading = true
+    store.loadingMessage = 'Starting the diagnostic specialists...'
+
     try {
-      const diagRes = await api.backendClient.startDiagnostic(store.sessionId)
-      if (diagRes.initial_messages && diagRes.initial_messages.length > 0) {
-        diagRes.initial_messages.forEach((m) => {
-          let tabId: TabKey = 'supervisor'
-          let agentName = m.agent_label || 'Specialist'
-          let initial = 'A'
-          let roleBadge = 'Specialist agent'
+      await api.backendClient.startDiagnostic(store.sessionId)
 
-          if (m.role === 'supervisor') {
-            tabId = 'supervisor'
-            agentName = 'Supervisor'
-            initial = 'S'
-            roleBadge = 'Gathering context'
-          } else if (m.agent_domain) {
-            initial = m.agent_domain.charAt(0).toUpperCase()
-            roleBadge = `${m.agent_label || 'Specialist'} · Needs clarification`
-            if (m.agent_domain.includes('req')) tabId = 'requirements'
-            else if (m.agent_domain.includes('code')) tabId = 'code'
-            else if (m.agent_domain.includes('test') || m.agent_domain.includes('qa')) tabId = 'testing'
-            else if (m.agent_domain.includes('devops')) tabId = 'devops'
-          }
-
-          chatMessages.value.push({
-            id: m.id,
-            tabId,
-            sender: m.role === 'user' ? 'user' : 'agent',
-            agentInitial: initial,
-            agentName,
-            roleBadge,
-            text: m.content,
-            timestamp: m.timestamp
-              ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-              : '09:41'
-          })
-        })
-      }
-
-      const gapsRes = await api.backendClient.getKnowledgeGaps(store.sessionId)
-      if (gapsRes && gapsRes.gaps) {
-        const gapList: UnresolvedKnowledgeGap[] = []
-        let idx = 1
-        for (const [domain, descriptions] of Object.entries(gapsRes.gaps)) {
-          if (Array.isArray(descriptions)) {
-            descriptions.forEach((desc: string) => {
-              gapList.push({
-                id: `gap-${idx++}`,
-                title: `${domain.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())} gap`,
-                description: desc,
-                status: 'Open'
-              })
-            })
-          }
-        }
-        if (gapList.length > 0) {
-          knowledgeGaps.value = gapList
-        }
-      }
+      // /diagnose returns immediately; the actual specialist pipeline call
+      // runs in the background and can take as long as a full specialist
+      // run (or several, back to back). Poll until it settles.
+      const convRes = await api.backendClient.pollConversation(store.sessionId, (msg) => {
+        store.loadingMessage = msg
+      })
+      convRes.messages.forEach((m) => ingestBackendMessage(m))
+      await refreshKnowledgeGaps(store.sessionId)
     } catch (err) {
       console.warn('Backend diagnostic load failed, falling back to local state:', err)
+    } finally {
+      store.isLoading = false
     }
   }
 
@@ -285,32 +321,26 @@ async function handleSendMessage() {
 
   // Real backend turn if connected
   if (!api.USE_MOCKS && store.sessionId) {
+    store.isLoading = true
+    store.loadingMessage = 'Waiting for the specialists to respond...'
     try {
-      const res = await api.backendClient.sendConversationMessage(store.sessionId, text)
-      if (res.new_messages && res.new_messages.length > 0) {
-        res.new_messages.forEach((m) => {
-          let tabId: TabKey = activeTab.value
-          if (m.role === 'supervisor') tabId = 'supervisor'
-          else if (m.agent_domain?.includes('req')) tabId = 'requirements'
-          else if (m.agent_domain?.includes('code')) tabId = 'code'
-          else if (m.agent_domain?.includes('test') || m.agent_domain?.includes('qa')) tabId = 'testing'
-          else if (m.agent_domain?.includes('devops')) tabId = 'devops'
+      await api.backendClient.sendConversationMessage(store.sessionId, text)
 
-          chatMessages.value.push({
-            id: m.id,
-            tabId,
-            sender: m.role === 'user' ? 'user' : 'agent',
-            agentInitial: m.role === 'supervisor' ? 'S' : m.agent_domain?.charAt(0).toUpperCase() || 'A',
-            agentName: m.agent_label || (m.role === 'supervisor' ? 'Supervisor' : 'Specialist Agent'),
-            roleBadge: m.role === 'supervisor' ? 'Supervisor synthesis' : 'Specialist clarification',
-            text: m.content,
-            timestamp: now
-          })
-        })
-      }
+      // The reply is handled by a background task on the backend (it may
+      // run the paused specialist to completion, then the next one, then
+      // the synthesizer, all in one turn) — poll until it settles. The
+      // user's own message is skipped since we already rendered it above.
+      const res = await api.backendClient.pollConversation(store.sessionId, (msg) => {
+        store.loadingMessage = msg
+      })
+      res.messages.forEach((m) => ingestBackendMessage(m, { skipUser: true }))
+      await refreshKnowledgeGaps(store.sessionId)
+
       scrollToBottom()
     } catch (err) {
       console.warn('Failed to send conversation message to backend:', err)
+    } finally {
+      store.isLoading = false
     }
   }
 }
