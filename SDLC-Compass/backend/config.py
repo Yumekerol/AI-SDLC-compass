@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     scanner_url: str = f"http://scanner:8001"
     scanner_url_base: str = f"{scanner_url}/api/v1"
 
+    # agent service info (supervisor + 4 specialists + synthesizer, Ollama-backed)
+    agents_url: str = "http://agents:8002"
+
+    # how long to wait on one pipeline turn (specialist exploration can be slow on local Ollama)
+    agents_request_timeout: float = 300.0
+
     # --- Paths ---
     base_dir: Path = Path(__file__).parent
     data_dir: Path | None = None

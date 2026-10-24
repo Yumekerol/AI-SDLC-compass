@@ -55,6 +55,7 @@ class SQLiteStore(BaseStore):
                     scanner_output TEXT,
                     signals_confirmed INTEGER NOT NULL DEFAULT 0,
                     signals_confirmed_at TEXT,
+                    processing INTEGER NOT NULL DEFAULT 0,
                     conversation TEXT,
                     agent_statuses TEXT,
                     knowledge_gaps TEXT,
@@ -66,6 +67,12 @@ class SQLiteStore(BaseStore):
                     updated_at TEXT NOT NULL
                 )
             """)
+            # Poor-man's migration: a database created before `processing`
+            # existed won't get it from CREATE TABLE IF NOT EXISTS above.
+            try:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN processing INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # column already exists
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS profiles (
                     session_id TEXT PRIMARY KEY,
@@ -93,9 +100,9 @@ class SQLiteStore(BaseStore):
                 INSERT OR REPLACE INTO sessions (
                     id, status, source_type, git_url, access_token, consent_given,
                     workspace_path, scan_id, scanner_output, signals_confirmed, signals_confirmed_at,
-                    conversation, agent_statuses, knowledge_gaps, report,
+                    processing, conversation, agent_statuses, knowledge_gaps, report,
                     report_generated_at, pdf_path, error_message, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.id,
                 session.status.value if hasattr(session.status, "value") else str(session.status),
@@ -108,6 +115,7 @@ class SQLiteStore(BaseStore):
                 json.dumps(session.scanner_output, default=str) if session.scanner_output else None,
                 1 if session.signals_confirmed else 0,
                 session.signals_confirmed_at.isoformat() if session.signals_confirmed_at else None,
+                1 if session.processing else 0,
                 json.dumps(session.conversation, default=str),
                 json.dumps(session.agent_statuses, default=str),
                 json.dumps(session.knowledge_gaps, default=str) if session.knowledge_gaps else None,
@@ -144,6 +152,7 @@ class SQLiteStore(BaseStore):
                 scanner_output=json.loads(row["scanner_output"]) if row["scanner_output"] else None,
                 signals_confirmed=bool(row["signals_confirmed"]),
                 signals_confirmed_at=datetime.fromisoformat(row["signals_confirmed_at"]) if row["signals_confirmed_at"] else None,
+                processing=bool(row["processing"]) if "processing" in row.keys() else False,
                 conversation=json.loads(row["conversation"]) if row["conversation"] else [],
                 agent_statuses=json.loads(row["agent_statuses"]) if row["agent_statuses"] else {},
                 knowledge_gaps=json.loads(row["knowledge_gaps"]) if row["knowledge_gaps"] else None,

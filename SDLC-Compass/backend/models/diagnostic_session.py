@@ -95,6 +95,12 @@ class DiagnosticSession(BaseModel):
     signals_confirmed_at: datetime | None = None
 
     # Step 3: Diagnostic conversation
+    processing: bool = False
+    """True while a background task is mid-turn with the Agent Service (a
+    specialist run, a resume, or the synthesizer). The frontend polls
+    GET /conversation and waits for this to go false before reading new
+    messages — /diagnose and /conversation POSTs return immediately rather
+    than blocking for however long the pipeline takes."""
     conversation: list[dict] = Field(default_factory=list)  # Serialized ConversationMessages
     agent_statuses: dict[str, dict] = Field(default_factory=lambda: {
         "requirements_design": {"status": "idle", "progress": 0.0},
