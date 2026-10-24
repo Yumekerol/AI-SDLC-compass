@@ -12,7 +12,11 @@ ENV/
 # Data & SQLite
 backend/data/
 SDLC-Compass/backend/data/
+agents/data/
+SDLC-Compass/agents/data/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 *.sqlite
 

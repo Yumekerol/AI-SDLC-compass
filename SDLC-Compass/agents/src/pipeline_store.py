@@ -9,6 +9,10 @@ specialist index we're on, the Reports already collected, and (if paused)
 which specialist and thread_id is waiting on a reply. Backend calls
 `/pipeline/start` and `/pipeline/reply` as separate HTTP requests, so this
 has to survive between them the same way the checkpointer does.
+
+Job-level status (running / needs_input / complete / error) is tracked in a
+second table so that `/pipeline/start` can return immediately and clients
+poll `/pipeline/status` for progress.
 """
 
 from __future__ import annotations
@@ -40,8 +44,20 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_status (
+            session_id TEXT PRIMARY KEY,
+            status     TEXT NOT NULL DEFAULT 'running',
+            result     TEXT,
+            error      TEXT
+        )
+        """
+    )
     return conn
 
+
+# ── specialist-position state (unchanged) ──────────────────────────
 
 def get_state(session_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
@@ -63,4 +79,43 @@ def save_state(session_id: str, state: dict[str, Any]) -> None:
 def delete_state(session_id: str) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM pipeline_state WHERE session_id = ?", (session_id,))
+        conn.commit()
+
+
+# ── job-level status ────────────────────────────────────────────────
+
+def set_job_status(
+    session_id: str,
+    status: str,
+    result: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO job_status (session_id, status, result, error) "
+            "VALUES (?, ?, ?, ?)",
+            (session_id, status, json.dumps(result) if result else None, error),
+        )
+        conn.commit()
+
+
+def get_job_status(session_id: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT status, result, error FROM job_status WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "session_id": session_id,
+        "status": row[0],
+        "result": json.loads(row[1]) if row[1] else None,
+        "error": row[2],
+    }
+
+
+def delete_job_status(session_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM job_status WHERE session_id = ?", (session_id,))
         conn.commit()

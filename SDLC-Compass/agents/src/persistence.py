@@ -17,22 +17,41 @@ the service is ever run with more than one worker/replica.
 
 from __future__ import annotations
 
-import sqlite3
-
-from langgraph.checkpoint.sqlite import SqliteSaver
+import aiosqlite
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from .config import settings
 
-_checkpointer: SqliteSaver | None = None
+_checkpointer: AsyncSqliteSaver | None = None
+_conn: aiosqlite.Connection | None = None
 
 
-def get_checkpointer() -> SqliteSaver:
-    """Return the process-wide specialist checkpointer, creating it on first use."""
-    global _checkpointer
+async def init_checkpointer() -> None:
+    """Open the async SQLite connection and create the checkpointer.
+    Call once during application startup (e.g. from the FastAPI lifespan)."""
+    global _checkpointer, _conn
+    if _checkpointer is not None:
+        return
+    settings.base_dir.joinpath("data").mkdir(parents=True, exist_ok=True)
+    db_path = settings.base_dir / "data" / "checkpoints.db"
+    _conn = await aiosqlite.connect(str(db_path))
+    _checkpointer = AsyncSqliteSaver(_conn)
+    await _checkpointer.setup()
+
+
+async def close_checkpointer() -> None:
+    """Close the connection. Call during application shutdown."""
+    global _checkpointer, _conn
+    if _conn is not None:
+        await _conn.close()
+    _checkpointer = None
+    _conn = None
+
+
+def get_checkpointer() -> AsyncSqliteSaver:
+    """Return the process-wide specialist checkpointer (must be initialized first)."""
     if _checkpointer is None:
-        settings.base_dir.joinpath("data").mkdir(parents=True, exist_ok=True)
-        db_path = settings.base_dir / "data" / "checkpoints.db"
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        _checkpointer = SqliteSaver(conn)
-        _checkpointer.setup()
+        raise RuntimeError("Checkpointer not initialized — call init_checkpointer() during startup")
     return _checkpointer
+
+

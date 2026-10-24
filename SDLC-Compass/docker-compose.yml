@@ -21,6 +21,7 @@ services:
       PORT: 8000
       SCANNER_URL: http://scanner:8001
       AGENTS_URL: http://agents:8002
+      AGENTS_REQUEST_TIMEOUT: 1800
       LOG_LEVEL: info
     ports:
       - "8000:8000"
@@ -54,8 +55,12 @@ services:
       OLLAMA_HOST: http://host.docker.internal:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    ports:
+      - "8002:8002"
     expose:
       - "8002"
+    volumes:
+      - ./agents/data:/app/data
     healthcheck:
       test:
         - CMD

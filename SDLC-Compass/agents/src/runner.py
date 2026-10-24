@@ -200,7 +200,7 @@ async def run_specialist(spec: SpecialistSpec, task: str, ctx: RunContext) -> Re
     agent = _build_agent(spec, ctx, counter)
     config = {"configurable": {"thread_id": thread_id}}
 
-    result = agent.invoke({"messages": [{"role": "user", "content": task}]}, config=config)
+    result = await agent.ainvoke({"messages": [{"role": "user", "content": task}]}, config=config)
     return _finish(spec, thread_id, result)
 
 
@@ -219,5 +219,5 @@ async def resume_specialist(spec: SpecialistSpec, thread_id: str, answer: str, c
     prior_messages = prior_state.values.get("messages", []) if prior_state and prior_state.values else []
     counter[0] = _count_tool_calls(prior_messages, spec.tool_names)
 
-    result = agent.invoke(Command(resume=answer), config=config)
+    result = await agent.ainvoke(Command(resume=answer), config=config)
     return _finish(spec, thread_id, result)

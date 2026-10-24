@@ -7,6 +7,7 @@ and retains an interactive CLI fallback for terminal testing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 from .agent import agent_service
 from .config import settings
 from . import pipeline
+from .persistence import init_checkpointer, close_checkpointer
 
 logging.basicConfig(
     level=logging.INFO if settings.debug else logging.WARNING,
@@ -31,7 +33,10 @@ logger = logging.getLogger("sdlc_compass.agents")
 async def lifespan(app: FastAPI):
     logger.info("Initializing SDLC-Compass Agent Service...")
     logger.info(f"Target Ollama model: {settings.chat_model} at {settings.ollama_host}")
+    await init_checkpointer()
+    logger.info("Async checkpointer ready.")
     yield
+    await close_checkpointer()
     logger.info("Agent Service shutdown complete.")
 
 
@@ -96,21 +101,55 @@ class PipelineStartRequest(BaseModel):
     repo_path: str
     team_context: dict[str, Any] = Field(default_factory=dict)
     scan_output: dict[str, Any] | None = None
+    background: bool = Field(default=False, description="If true, returns immediately with accepted status")
 
 
 class PipelineReplyRequest(BaseModel):
     session_id: str
     answer: str
+    background: bool = Field(default=False, description="If true, returns immediately with accepted status")
+
+
+# Background tasks keyed by session_id so we can detect double-starts.
+_running_tasks: dict[str, asyncio.Task] = {}
 
 
 @app.post("/pipeline/start", tags=["Pipeline"])
 async def pipeline_start(req: PipelineStartRequest):
     """
     Run the supervisor -> 4 specialists -> synthesizer pipeline for one
-    diagnostic session, starting fresh. Stops early if a specialist asks the
-    user a clarifying question; call /pipeline/reply with the answer to
-    continue from exactly where it paused.
+    diagnostic session.
+
+    If `background=False` (default), blocks until the turn finishes (either
+    pausing on ask_user with status="needs_input" or completing with
+    status="complete"). This is the direct relay mode used by the backend.
+
+    If `background=True`, fires a background task and returns {"status": "accepted"}
+    immediately. Poll GET /pipeline/status?session_id=... to monitor progress.
     """
+    if req.session_id in _running_tasks and not _running_tasks[req.session_id].done():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pipeline already running for session {req.session_id}",
+        )
+
+    if req.background:
+        async def _run():
+            try:
+                await pipeline.run_pipeline(
+                    session_id=req.session_id,
+                    repo_path=req.repo_path,
+                    team_context=req.team_context,
+                    scan_output=req.scan_output,
+                )
+            except Exception:
+                logger.exception("Background pipeline task failed for session %s", req.session_id)
+            finally:
+                _running_tasks.pop(req.session_id, None)
+
+        _running_tasks[req.session_id] = asyncio.create_task(_run())
+        return {"session_id": req.session_id, "status": "accepted"}
+
     try:
         result = await pipeline.run_pipeline(
             session_id=req.session_id,
@@ -118,10 +157,10 @@ async def pipeline_start(req: PipelineStartRequest):
             team_context=req.team_context,
             scan_output=req.scan_output,
         )
+        return result.model_dump(mode="json")
     except Exception as e:
-        logger.exception(f"Pipeline start failed for session {req.session_id}: {e}")
+        logger.exception("Pipeline start failed for session %s: %s", req.session_id, e)
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
-    return result.model_dump(mode="json")
 
 
 @app.post("/pipeline/reply", tags=["Pipeline"])
@@ -129,20 +168,45 @@ async def pipeline_reply(req: PipelineReplyRequest):
     """
     Answer the clarifying question a specialist is currently paused on, and
     continue the pipeline from there.
+
+    Supports synchronous return (default) or background execution (background=True).
     """
+    if req.session_id in _running_tasks and not _running_tasks[req.session_id].done():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pipeline already running for session {req.session_id}",
+        )
+
+    if req.background:
+        async def _resume():
+            try:
+                await pipeline.resume_pipeline(session_id=req.session_id, answer=req.answer)
+            except Exception:
+                logger.exception("Background pipeline resume failed for session %s", req.session_id)
+            finally:
+                _running_tasks.pop(req.session_id, None)
+
+        _running_tasks[req.session_id] = asyncio.create_task(_resume())
+        return {"session_id": req.session_id, "status": "accepted"}
+
     try:
         result = await pipeline.resume_pipeline(session_id=req.session_id, answer=req.answer)
+        return result.model_dump(mode="json")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.exception(f"Pipeline resume failed for session {req.session_id}: {e}")
+        logger.exception("Pipeline resume failed for session %s: %s", req.session_id, e)
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
-    return result.model_dump(mode="json")
+
 
 
 @app.get("/pipeline/status", tags=["Pipeline"])
 async def pipeline_status(session_id: str):
-    """Read the current position of a session's pipeline (debugging/reconnect)."""
+    """
+    Poll this endpoint to watch pipeline progress.
+    Returns status (running | needs_input | complete | error) and the result
+    payload once the pipeline finishes or pauses for a question.
+    """
     state = pipeline.get_status(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"No pipeline state for session {session_id}")
