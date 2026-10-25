@@ -215,7 +215,7 @@ async def resume_specialist(spec: SpecialistSpec, thread_id: str, answer: str, c
     agent = _build_agent(spec, ctx, counter)
     config = {"configurable": {"thread_id": thread_id}}
 
-    prior_state = agent.get_state(config)
+    prior_state = await agent.aget_state(config)
     prior_messages = prior_state.values.get("messages", []) if prior_state and prior_state.values else []
     counter[0] = _count_tool_calls(prior_messages, spec.tool_names)
 
