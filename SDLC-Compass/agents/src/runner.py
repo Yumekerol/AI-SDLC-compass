@@ -183,12 +183,27 @@ def _finish(spec: SpecialistSpec, thread_id: str, result: dict[str, Any]) -> Rep
     messages = result.get("messages", [])
     tool_calls_made = _count_tool_calls(messages, spec.tool_names)
     status = "capped" if spec.max_tool_calls is not None and tool_calls_made >= spec.max_tool_calls else "complete"
+    findings = _extract_findings(messages)
+    summary = _final_summary(messages)
+
+    if status == "complete" and not findings and not summary:
+        # Indistinguishable from "nothing to report" otherwise — in practice
+        # this has meant the model never actually invoked note()/ask_user as
+        # real tool calls (see the prompts' IMPORTANT note) and produced no
+        # final text either. Worth a loud signal rather than silently
+        # reporting a clean, uneventful success.
+        logger.warning(
+            "Specialist %s finished with no findings and no summary — it likely "
+            "never used its tools correctly this run.",
+            spec.role,
+        )
+
     return Report(
         role=spec.role,
         label=spec.label,
-        findings=_extract_findings(messages),
+        findings=findings,
         questions_asked=_extract_questions_asked(messages),
-        summary=_final_summary(messages),
+        summary=summary,
         status=status,
     )
 

@@ -27,7 +27,11 @@ class ReadinessScore(BaseModel):
     domain_label: str
     readiness_score: int = Field(ge=0, le=10)
     opportunity_score: int = Field(ge=0, le=10)
-    readiness_label: str
+    readiness_label: Literal["Critical", "Weak", "Developing", "Solid", "Strong"]
+    """A short badge label, not a sentence — report/generator.py renders this
+    directly inside a pill. Constrained to a fixed set rather than left as a
+    free string, since a local model will otherwise happily return a full
+    sentence here (seen in real testing)."""
     verdict: str
 
 
@@ -79,7 +83,9 @@ DevOps & Monitoring), each a list of discrete findings with evidence. Your job:
    (overall_readiness_score is 0-10, aggregating the 4 domain scores; be conservative — a repo with \
    little evidence should not score high).
 2. Produce one readiness_scorecard entry per domain (readiness_score and opportunity_score 0-10, \
-   both grounded in the findings, not guessed).
+   both grounded in the findings, not guessed). readiness_label is ONE of exactly: "Critical", \
+   "Weak", "Developing", "Solid", "Strong" — never a sentence or anything else. verdict is where the \
+   explanation goes, one or two sentences.
 3. Produce phased_recommendations across exactly three phases — phase_1_foundation (prerequisites that \
    block everything else), phase_2_quick_wins (low-effort, high-impact), phase_3_advanced (deeper AI \
    integration work) — each with concrete recommendations tied back to specific findings.

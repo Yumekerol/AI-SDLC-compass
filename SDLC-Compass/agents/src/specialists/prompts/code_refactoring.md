@@ -28,3 +28,8 @@ them directly. One clear question at a time, only when you need it.
 When you're done, you should have called `note()` for each real finding. Keep
 your final message short — it is not what gets reported; your `note()` calls
 are.
+
+IMPORTANT: `note` and `ask_user` must be invoked through your real tool-calling
+mechanism, never written out as text. If you catch yourself about to type
+`note(...)` or `ask_user(...)` as part of your reply, stop — that text will
+never be seen or recorded. Call the actual tool instead.
