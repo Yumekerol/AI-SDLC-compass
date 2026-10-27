@@ -139,6 +139,12 @@ export async function updateSignals(updated: RepoSignals, sessionId?: string): P
  * Confirm reviewed signals and lock them before moving to diagnostic Q&A
  */
 export async function confirmSignals(sessionId?: string): Promise<{ success: boolean; status?: string }> {
+  if (!USE_MOCKS && !sessionId) {
+    // Real-backend mode with no session has nothing to confirm server-side —
+    // a real error, not a silent mock success that advances the user past a
+    // step nothing actually happened for.
+    throw new Error('No active session — the repository connection may have been lost. Please reconnect.')
+  }
   if (!USE_MOCKS && sessionId) {
     const res = await backendClient.confirmSignals(sessionId)
     return { success: true, status: res.status }
@@ -207,6 +213,20 @@ export async function generateDiagnostic(
 }
 
 /**
+ * Fetch an already-generated report without re-running synthesis — for
+ * loading ReportView directly (a page reload, or navigating back to it)
+ * when the report was generated earlier in the session and just needs to
+ * be read, not regenerated. Throws if the backend has no report yet for
+ * this session (diagnostic not finished) — callers should show a "not
+ * ready" state rather than fabricating one.
+ */
+export async function getExistingDiagnostic(sessionId: string): Promise<DiagnosticReport> {
+  const rawReport = await backendClient.getReport(sessionId)
+  currentDiagnostic = adaptBackendReportToDiagnosticReport(rawReport)
+  return currentDiagnostic
+}
+
+/**
  * Regenerate diagnostic report (creating a fresh version)
  */
 export async function regenerateDiagnostic(
@@ -271,6 +291,12 @@ export async function sendAdvisorMessage(content: string): Promise<AdvisorMessag
 export async function exportPdfReport(
   sessionId?: string
 ): Promise<{ success: boolean; filename: string; isPdf?: boolean }> {
+  if (!USE_MOCKS && !sessionId) {
+    // Real-backend mode with no session is a real error, not something to
+    // fake a successful download for.
+    throw new Error('No active session — connect a repository before exporting a report.')
+  }
+
   if (!USE_MOCKS && sessionId) {
     const { blob, filename, isPdf } = await backendClient.downloadReportBlob(sessionId)
     const url = window.URL.createObjectURL(blob)

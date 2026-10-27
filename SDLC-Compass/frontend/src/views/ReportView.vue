@@ -14,10 +14,30 @@ const store = useSessionStore()
 
 const exportNotice = ref<string>('')
 const isExporting = ref<boolean>(false)
+const isMock = computed(() => store.isMock)
+
+// Real-backend sessions whose report isn't ready yet get a "not ready" state
+// instead of a fabricated mock report — true only while that's the case.
+const reportNotReady = ref<boolean>(false)
 
 onMounted(async () => {
   store.ensureSampleSignals()
   store.setStep(4)
+
+  if (!isMock.value && store.sessionId) {
+    if (!store.diagnostic) {
+      // Direct navigation or a page reload — the report may already exist
+      // on the backend even though this session's local state doesn't have
+      // it (e.g. generateDiagnosticReport ran in an earlier page load).
+      try {
+        store.diagnostic = await api.getExistingDiagnostic(store.sessionId)
+      } catch (err) {
+        console.warn('No report available yet for this session:', err)
+        reportNotReady.value = true
+      }
+    }
+    return
+  }
 
   if (!store.diagnostic) {
     store.diagnostic = JSON.parse(JSON.stringify(mockDiagnosticReport))
@@ -27,7 +47,6 @@ onMounted(async () => {
 const report = computed<DiagnosticReport>(() => {
   return store.diagnostic || mockDiagnosticReport
 })
-const isMock = computed(() => store.isMock)
 
 const orderedPhases = computed<{ key: SdlcPhase; title: string }[]>(() => {
   if (
@@ -107,7 +126,21 @@ function goBackToQuestions() {
 </script>
 
 <template>
-  <div v-if="report" class="report-view container">
+  <div v-if="reportNotReady" class="report-view container not-ready-state">
+    <div class="screen-meta">
+      <span class="step-badge">TEAM DIAGNOSTIC / STEP 4 OF 5</span>
+      <h1 class="page-title">Report isn't ready yet</h1>
+      <p class="page-subtitle">
+        The diagnostic conversation hasn't finished — one or more specialists are still working or
+        waiting on an answer. Head back to Team context to continue it.
+      </p>
+    </div>
+    <button type="button" class="btn-primary" @click="goBackToQuestions">
+      Back to team context
+    </button>
+  </div>
+
+  <div v-else-if="report" class="report-view container">
     <!-- Top Step Meta Header with Action Buttons -->
     <div class="report-header-row">
       <div class="screen-meta">
@@ -200,25 +233,39 @@ function goBackToQuestions() {
       <div class="profile-four-grid">
         <div class="profile-col">
           <span class="col-heading">REPOSITORY</span>
-          <strong class="col-value">48 code files</strong>
+          <strong class="col-value">
+            {{ isMock ? '48 code files' : `${store.repoSignals?.totalSupportedFiles ?? '—'} code files` }}
+          </strong>
           <p class="col-detail">{{ report.projectProfile.codeFilesSummary }}</p>
         </div>
 
         <div class="profile-col">
           <span class="col-heading">TEAM</span>
-          <strong class="col-value">8 members · Scrum</strong>
+          <strong class="col-value">{{ isMock ? '8 members · Scrum' : 'Team-reported' }}</strong>
           <p class="col-detail">{{ report.projectProfile.teamSummary }}</p>
         </div>
 
         <div class="profile-col">
           <span class="col-heading">AI MATURITY</span>
-          <strong class="col-value">Exploratory</strong>
+          <strong class="col-value">{{ isMock ? 'Exploratory' : 'Team-reported' }}</strong>
           <p class="col-detail">{{ report.projectProfile.aiMaturitySummary }}</p>
         </div>
 
         <div class="profile-col">
           <span class="col-heading">QUALITY & CONFIDENCE</span>
-          <strong class="col-value">14.3% file-ratio proxy</strong>
+          <strong class="col-value">
+            {{
+              isMock
+                ? '14.3% file-ratio proxy'
+                : store.repoSignals?.quality?.sourceFilesCount
+                  ? `${Math.round(
+                      ((store.repoSignals.quality.testFilesCount || 0) /
+                        store.repoSignals.quality.sourceFilesCount) *
+                        100
+                    )}% file-ratio proxy`
+                  : '— file-ratio proxy'
+            }}
+          </strong>
           <p class="col-detail">{{ report.projectProfile.qualitySummary }}</p>
         </div>
       </div>
@@ -311,6 +358,14 @@ function goBackToQuestions() {
 .report-view {
   padding-top: 2.25rem;
   padding-bottom: 4rem;
+}
+
+.not-ready-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.25rem;
+  padding-top: 4rem;
 }
 
 .report-header-row {

@@ -277,11 +277,22 @@ onMounted(async () => {
     store.loadingMessage = 'Starting the diagnostic specialists...'
 
     try {
-      await api.backendClient.startDiagnostic(store.sessionId)
+      // Re-mounting this view (navigating away and back) must not re-kick
+      // the whole pipeline — only call /diagnose if this session genuinely
+      // has no conversation yet.
+      const existing = await api.backendClient.getConversation(store.sessionId).catch(() => null)
+
+      if (!existing || existing.messages.length === 0) {
+        await api.backendClient.startDiagnostic(store.sessionId)
+      } else {
+        existing.messages.forEach((m) => ingestBackendMessage(m))
+      }
 
       // /diagnose returns immediately; the actual specialist pipeline call
       // runs in the background and can take as long as a full specialist
-      // run (or several, back to back). Poll until it settles.
+      // run (or several, back to back). Poll until it settles. If the
+      // existing conversation was already done (processing already false),
+      // this resolves on its first check.
       const convRes = await api.backendClient.pollConversation(store.sessionId, (msg) => {
         store.loadingMessage = msg
       })
