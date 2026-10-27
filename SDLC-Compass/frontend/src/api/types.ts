@@ -231,6 +231,11 @@ export interface BackendKnowledgeGapsResponse {
   gaps: Record<string, string[]>
 }
 
+export interface BackendAdvisorMessagesResponse {
+  session_id: string
+  messages: BackendConversationMessage[]
+}
+
 export interface BackendContinueDiagnosticResponse {
   session_id: string
   status: string

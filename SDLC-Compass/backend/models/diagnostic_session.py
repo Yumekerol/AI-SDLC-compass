@@ -115,6 +115,12 @@ class DiagnosticSession(BaseModel):
     report_generated_at: datetime | None = None
     pdf_path: str | None = None
 
+    # Step 5: Advisor/support chat — stays available after the report is
+    # ready. Separate from `conversation` (the Step-3 diagnostic interview,
+    # pipeline-turn structured); this is open-ended Q&A, same shape as a
+    # ConversationMessage so the frontend can reuse the same rendering.
+    advisor_messages: list[dict] = Field(default_factory=list)
+
     # Error tracking
     error_message: str | None = None
 

@@ -61,6 +61,11 @@ class ChatRequest(BaseModel):
     message: str = Field(..., description="User question or prompt for the agent")
     session_id: str = Field(default="default", description="Session/thread identifier for memory persistence")
     repo_path: str | None = Field(default=None, description="Optional absolute path to target repository")
+    git_url: str | None = Field(
+        default=None,
+        description="If given, resolved via the same clone-or-reuse logic as /pipeline/start (reuses that session's existing clone if present). Takes precedence over repo_path.",
+    )
+    access_token: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -91,6 +96,8 @@ async def chat_with_agent(req: ChatRequest):
         message=req.message,
         session_id=req.session_id,
         repo_path=req.repo_path,
+        git_url=req.git_url,
+        access_token=req.access_token,
     )
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("answer"))

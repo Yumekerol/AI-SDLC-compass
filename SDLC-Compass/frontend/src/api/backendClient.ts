@@ -10,6 +10,7 @@ import type {
   BackendConversationResponse,
   BackendSendMessageResponse,
   BackendKnowledgeGapsResponse,
+  BackendAdvisorMessagesResponse,
   BackendContinueDiagnosticResponse,
   BackendSynthesisOutput
 } from './types'
@@ -266,6 +267,30 @@ export async function sendConversationMessage(
 export async function getKnowledgeGaps(sessionId: string): Promise<BackendKnowledgeGapsResponse> {
   return request<BackendKnowledgeGapsResponse>(`/sessions/${sessionId}/knowledge-gaps`, {
     method: 'GET'
+  })
+}
+
+/**
+ * Step 5: Fetch advisor/support chat history (persists across reloads,
+ * unlike the Agent Service's own in-memory conversation state)
+ */
+export async function getAdvisorMessages(sessionId: string): Promise<BackendAdvisorMessagesResponse> {
+  return request<BackendAdvisorMessagesResponse>(`/sessions/${sessionId}/advisor/messages`, {
+    method: 'GET'
+  })
+}
+
+/**
+ * Step 5: Send a message to the advisor and get its reply. A single bounded
+ * call, not pipeline-backgrounded — no polling needed here.
+ */
+export async function sendAdvisorMessage(
+  sessionId: string,
+  content: string
+): Promise<BackendAdvisorMessagesResponse> {
+  return request<BackendAdvisorMessagesResponse>(`/sessions/${sessionId}/advisor/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content })
   })
 }
 

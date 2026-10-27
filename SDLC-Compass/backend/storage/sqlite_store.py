@@ -63,16 +63,22 @@ class SQLiteStore(BaseStore):
                     report_generated_at TEXT,
                     pdf_path TEXT,
                     error_message TEXT,
+                    advisor_messages TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             """)
-            # Poor-man's migration: a database created before `processing`
-            # existed won't get it from CREATE TABLE IF NOT EXISTS above.
-            try:
-                cursor.execute("ALTER TABLE sessions ADD COLUMN processing INTEGER NOT NULL DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass  # column already exists
+            # Poor-man's migration: a database created before `processing`/
+            # `advisor_messages` existed won't get them from CREATE TABLE IF
+            # NOT EXISTS above.
+            for migration in (
+                "ALTER TABLE sessions ADD COLUMN processing INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE sessions ADD COLUMN advisor_messages TEXT",
+            ):
+                try:
+                    cursor.execute(migration)
+                except sqlite3.OperationalError:
+                    pass  # column already exists
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS profiles (
                     session_id TEXT PRIMARY KEY,
@@ -101,8 +107,9 @@ class SQLiteStore(BaseStore):
                     id, status, source_type, git_url, access_token, consent_given,
                     workspace_path, scan_id, scanner_output, signals_confirmed, signals_confirmed_at,
                     processing, conversation, agent_statuses, knowledge_gaps, report,
-                    report_generated_at, pdf_path, error_message, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    report_generated_at, pdf_path, error_message, advisor_messages,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.id,
                 session.status.value if hasattr(session.status, "value") else str(session.status),
@@ -123,6 +130,7 @@ class SQLiteStore(BaseStore):
                 session.report_generated_at.isoformat() if session.report_generated_at else None,
                 session.pdf_path,
                 session.error_message,
+                json.dumps(session.advisor_messages, default=str),
                 session.created_at.isoformat(),
                 session.updated_at.isoformat(),
             ))
@@ -160,6 +168,7 @@ class SQLiteStore(BaseStore):
                 report_generated_at=datetime.fromisoformat(row["report_generated_at"]) if row["report_generated_at"] else None,
                 pdf_path=row["pdf_path"],
                 error_message=row["error_message"],
+                advisor_messages=json.loads(row["advisor_messages"]) if row["advisor_messages"] else [],
                 created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
             )

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import * as api from '@/api'
@@ -17,18 +17,33 @@ const inputText = ref<string>('')
 const isSending = ref<boolean>(false)
 const chatScrollContainer = ref<HTMLElement | null>(null)
 
+const isMock = computed(() => store.isMock)
+
+function mapBackendMessage(m: { id: string; role: string; agent_label?: string | null; content: string; timestamp: string }): AdvisorMessage {
+  return {
+    id: m.id,
+    sender: m.role === 'user' ? 'user' : 'advisor',
+    senderName: m.role === 'user' ? 'Team representative' : m.agent_label || 'Advisor',
+    content: m.content,
+    timestamp: m.timestamp
+      ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+}
+
 onMounted(async () => {
   store.ensureSampleSignals()
   store.setStep(5)
 
-  try {
-    const [loadedContext, loadedMessages] = await Promise.all([
-      api.getAdvisorContext(),
-      api.getAdvisorMessages()
-    ])
-    context.value = loadedContext
-    messages.value = loadedMessages
-  } catch {
+  if (!api.USE_MOCKS && store.sessionId) {
+    try {
+      const res = await api.backendClient.getAdvisorMessages(store.sessionId)
+      messages.value = res.messages.map(mapBackendMessage)
+    } catch (err) {
+      console.warn('Advisor history load failed, falling back to local state:', err)
+      messages.value = []
+    }
+  } else {
     context.value = mockAdvisorContext
     messages.value = mockInitialAdvisorMessages
   }
@@ -63,13 +78,22 @@ async function handleSend(textToSend?: string) {
   messages.value.push(userMsg)
   scrollToBottom()
 
-  // 2. Call typed API
+  // 2. Real backend turn if connected, else the mock advisor
   try {
-    const reply = await api.sendAdvisorMessage(content)
-    messages.value.push(reply)
+    if (!api.USE_MOCKS && store.sessionId) {
+      const res = await api.backendClient.sendAdvisorMessage(store.sessionId, content)
+      // Backend echoes the user's own message back too (it's the source of
+      // truth for history) — only append the advisor's reply here, since
+      // the user's bubble is already on screen from the optimistic push above.
+      const reply = res.messages.find((m) => m.role !== 'user')
+      if (reply) messages.value.push(mapBackendMessage(reply))
+    } else {
+      const reply = await api.sendAdvisorMessage(content)
+      messages.value.push(reply)
+    }
     scrollToBottom()
-  } catch {
-    // Graceful error notification if needed
+  } catch (err) {
+    console.warn('Failed to send advisor message:', err)
   } finally {
     isSending.value = false
   }
@@ -102,7 +126,7 @@ function handleBackToReport() {
         Engage with the specialist agents and the synthesizer. Challenge recommendations,
         inquire about implementation steps, or adjust priorities based on team realities.
       </p>
-      <div class="preview-notice-badge">
+      <div v-if="isMock" class="preview-notice-badge">
         <svg class="preview-notice-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path
             fill-rule="evenodd"

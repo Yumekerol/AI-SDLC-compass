@@ -17,6 +17,7 @@ try:
 except ImportError:
     from langgraph.prebuilt import create_react_agent as create_agent
 
+from .acquisition import ensure_repo
 from .config import settings
 from .context import RunContext
 from .tools import build_tools
@@ -46,53 +47,67 @@ SYSTEM_PROMPT = (
 class AgentService:
     """Manages LangGraph agent instances and in-memory session threads.
 
-    This is the generic, ad-hoc `/chat` advisor only (single cached agent,
-    one shared RunContext mutated per call). The real specialist pipeline
-    (see `runner.py`/`pipeline.py`) builds a fresh, isolated RunContext per
-    run instead, so concurrent specialist runs against different repos can
-    never share state the way this singleton deliberately does.
+    This is the generic advisor behind /chat — one agent + RunContext per
+    session_id (a dict, not a single shared instance), so concurrent advisor
+    conversations about different repos can't corrupt each other's "current
+    repo" the way an earlier singleton version of this class did. The real
+    specialist pipeline (see `runner.py`/`pipeline.py`) already builds a
+    fresh RunContext per run for the same reason; this brings /chat in line
+    with that for real multi-session use rather than just ad-hoc testing.
     """
 
     def __init__(self):
         self.checkpointer = InMemorySaver()
-        self._agent = None
-        self._ctx = RunContext(root=settings.default_workspace_dir)
+        self._agents: dict[str, Any] = {}
+        self._ctxs: dict[str, RunContext] = {}
 
-    def get_agent(self):
-        """Build or return cached agent graph."""
-        if self._agent is None:
+    def _get_ctx(self, session_id: str) -> RunContext:
+        if session_id not in self._ctxs:
+            self._ctxs[session_id] = RunContext(root=settings.default_workspace_dir)
+        return self._ctxs[session_id]
+
+    def get_agent(self, session_id: str):
+        """Build or return this session's cached agent graph."""
+        if session_id not in self._agents:
             model = ChatOllama(
                 model=settings.chat_model,
                 base_url=settings.ollama_host,
                 temperature=settings.temperature,
             )
-            tools = list(build_tools(self._ctx).values()) + [word_count]
-            self._agent = create_agent(
+            tools = list(build_tools(self._get_ctx(session_id)).values()) + [word_count]
+            self._agents[session_id] = create_agent(
                 model=model,
                 tools=tools,
                 system_prompt=SYSTEM_PROMPT,
                 checkpointer=self.checkpointer,
             )
-        return self._agent
+        return self._agents[session_id]
 
     async def run(
         self,
         message: str,
         session_id: str = "default",
         repo_path: Path | str | None = None,
+        git_url: str | None = None,
+        access_token: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute a turn with the agent for a given session/thread.
         Maintains conversation history via InMemorySaver keyed by session_id.
         """
-        if repo_path:
+        ctx = self._get_ctx(session_id)
+        if git_url:
+            # Reuses the clone the specialist pipeline already made for this
+            # session, if any — same acquisition path as /pipeline/start.
+            ctx.root = await ensure_repo(session_id, git_url, access_token)
+        elif repo_path:
             target_path = Path(repo_path).resolve()
             if target_path.exists():
-                self._ctx.root = target_path
+                ctx.root = target_path
             else:
                 logger.warning(f"Specified repo_path {target_path} does not exist. Using default.")
 
-        agent = self.get_agent()
+        agent = self.get_agent(session_id)
         config = {"configurable": {"thread_id": session_id}}
 
         tool_calls: list[dict[str, Any]] = []
