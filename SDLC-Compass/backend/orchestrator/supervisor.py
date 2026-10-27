@@ -75,6 +75,28 @@ class Supervisor:
             gaps[role] = descriptions
         return gaps
 
+    def _build_knowledge_gaps_summary(self, reports: list[dict]) -> dict:
+        """The same material as _build_knowledge_gaps, shaped for the report
+        itself (frontend's ReportView "evidence gap" banner reads this key —
+        it's never set otherwise, so that banner can never fire on real
+        data)."""
+        total_asked = sum(len(r.get("questions_asked", [])) for r in reports)
+        unresolved = [
+            {"domain": r.get("role", ""), "claim": f.get("claim", ""), "confidence": f.get("confidence")}
+            for r in reports
+            for f in r.get("findings", [])
+            if f.get("confidence") == "low"
+        ]
+        return {
+            # Every question asked got an answer by the time the pipeline
+            # reaches "complete" (resume_specialist always supplies one) —
+            # "resolved" here means "the specialist had to ask", not "still
+            # open"; unresolved_gaps below is the separate, still-uncertain set.
+            "total_asked": total_asked,
+            "total_resolved": total_asked,
+            "unresolved_gaps": unresolved,
+        }
+
     async def _handle_pipeline_result(self, session: DiagnosticSession, result: dict) -> list[dict]:
         """Turn one /pipeline/start or /pipeline/reply response into the new
         conversation message(s) for this turn, updating session state.
@@ -99,9 +121,11 @@ class Supervisor:
             for role in ROLE_LABELS:
                 session.agent_statuses[role] = {"status": "complete", "progress": 1.0}
 
-            session.knowledge_gaps = self._build_knowledge_gaps(result.get("reports") or [])
+            reports = result.get("reports") or []
+            session.knowledge_gaps = self._build_knowledge_gaps(reports)
 
             report = dict(result.get("synthesis") or {})
+            report["knowledge_gaps_summary"] = self._build_knowledge_gaps_summary(reports)
             repo_info = (session.scanner_output or {}).get("repository", {})
             report.setdefault(
                 "repository",
