@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from .advisor import router as advisor_router
 from .diagnostic import router as diagnostic_router
+from .notifications import router as notifications_router
 from .reports import router as reports_router
 from .scan import router as scan_router
 from .sessions import router as sessions_router
@@ -14,5 +15,6 @@ api_v1_router.include_router(scan_router)
 api_v1_router.include_router(diagnostic_router)
 api_v1_router.include_router(reports_router)
 api_v1_router.include_router(advisor_router)
+api_v1_router.include_router(notifications_router)
 
 __all__ = ["api_v1_router"]

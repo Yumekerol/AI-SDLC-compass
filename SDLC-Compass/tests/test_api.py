@@ -267,6 +267,29 @@ def test_full_diagnostic_api_lifecycle():
         conv_data = _wait_until_not_processing(session_id)
         assert conv_data["status"] == "report_ready"
 
+    # 8b. Notifications — a needs_input one from the clarifying question and
+    # a report_ready one from the pipeline finishing should both be recorded.
+    notif_res = client.get(f"/api/v1/sessions/{session_id}/notifications")
+    assert notif_res.status_code == 200
+    notifications = notif_res.json()["notifications"]
+    assert [n["type"] for n in notifications] == ["needs_input", "report_ready"]
+    assert all(n["read"] is False for n in notifications)
+
+    unread_res = client.get(f"/api/v1/sessions/{session_id}/notifications?unread_only=true")
+    assert len(unread_res.json()["notifications"]) == 2
+
+    first_id = notifications[0]["id"]
+    read_res = client.post(f"/api/v1/sessions/{session_id}/notifications/{first_id}/read")
+    assert read_res.status_code == 200
+    assert read_res.json()["notification"]["read"] is True
+
+    unread_res = client.get(f"/api/v1/sessions/{session_id}/notifications?unread_only=true")
+    assert len(unread_res.json()["notifications"]) == 1
+
+    read_all_res = client.post(f"/api/v1/sessions/{session_id}/notifications/read-all")
+    assert read_all_res.status_code == 200
+    assert all(n["read"] for n in read_all_res.json()["notifications"])
+
     # 9. Get Knowledge Gaps — fed by the specialists' own low-confidence
     # findings and the questions they had to ask (see FAKE_COMPLETE above).
     gaps_res = client.get(f"/api/v1/sessions/{session_id}/knowledge-gaps")

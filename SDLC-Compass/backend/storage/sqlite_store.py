@@ -64,16 +64,18 @@ class SQLiteStore(BaseStore):
                     pdf_path TEXT,
                     error_message TEXT,
                     advisor_messages TEXT,
+                    notifications TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             """)
             # Poor-man's migration: a database created before `processing`/
-            # `advisor_messages` existed won't get them from CREATE TABLE IF
-            # NOT EXISTS above.
+            # `advisor_messages`/`notifications` existed won't get them from
+            # CREATE TABLE IF NOT EXISTS above.
             for migration in (
                 "ALTER TABLE sessions ADD COLUMN processing INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE sessions ADD COLUMN advisor_messages TEXT",
+                "ALTER TABLE sessions ADD COLUMN notifications TEXT",
             ):
                 try:
                     cursor.execute(migration)
@@ -107,9 +109,9 @@ class SQLiteStore(BaseStore):
                     id, status, source_type, git_url, access_token, consent_given,
                     workspace_path, scan_id, scanner_output, signals_confirmed, signals_confirmed_at,
                     processing, conversation, agent_statuses, knowledge_gaps, report,
-                    report_generated_at, pdf_path, error_message, advisor_messages,
+                    report_generated_at, pdf_path, error_message, advisor_messages, notifications,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.id,
                 session.status.value if hasattr(session.status, "value") else str(session.status),
@@ -131,6 +133,7 @@ class SQLiteStore(BaseStore):
                 session.pdf_path,
                 session.error_message,
                 json.dumps(session.advisor_messages, default=str),
+                json.dumps(session.notifications, default=str),
                 session.created_at.isoformat(),
                 session.updated_at.isoformat(),
             ))
@@ -169,6 +172,7 @@ class SQLiteStore(BaseStore):
                 pdf_path=row["pdf_path"],
                 error_message=row["error_message"],
                 advisor_messages=json.loads(row["advisor_messages"]) if row["advisor_messages"] else [],
+                notifications=json.loads(row["notifications"]) if row["notifications"] else [],
                 created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
             )

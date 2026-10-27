@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from ..config import settings
 from ..models.contextual_profile import ContextualProfile
-from ..models.diagnostic_session import DiagnosticSession, SessionStatus, SourceType
+from ..models.diagnostic_session import DiagnosticSession, SessionStatus, SourceType, add_notification
 from ..models.scanner_output import ScannerOutput
 from ..models.scanner_mapping_output import build_scanner_output
 from ..storage import get_storage
@@ -67,6 +67,13 @@ async def execute_scan_task(session_id: str):
             session.scanner_output = scan_result.model_dump(mode="json")
             session.status = SessionStatus.AWAITING_SIGNAL_REVIEW
             session.error_message = None
+            add_notification(
+                session,
+                type="scan_complete",
+                title="Scan complete",
+                message="Your repository scan is done — review the signals.",
+                route_hint="/signals",
+            )
             await store.update_session(session)
     
             # Initialize profile scanner signals

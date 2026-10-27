@@ -33,6 +33,7 @@ from ..models.diagnostic_session import (
     DiagnosticSession,
     SessionStatus,
     SourceType,
+    add_notification,
 )
 from ..storage import BaseStore
 
@@ -117,6 +118,14 @@ class Supervisor:
                 questions=[ConversationQuestion(question_id=f"q-{uuid4().hex[:6]}", text=result["question"])],
             )
             responses.append(msg.model_dump(mode="json"))
+            add_notification(
+                session,
+                type="needs_input",
+                title=f"{ROLE_LABELS.get(role, role)} needs your input",
+                message=result["question"],
+                domain=role,
+                route_hint="/questions",
+            )
         else:  # "complete"
             for role in ROLE_LABELS:
                 session.agent_statuses[role] = {"status": "complete", "progress": 1.0}
@@ -151,6 +160,13 @@ class Supervisor:
                 ),
             )
             responses.append(sup_msg.model_dump(mode="json"))
+            add_notification(
+                session,
+                type="report_ready",
+                title="Your diagnostic report is ready",
+                message=sup_msg.content,
+                route_hint="/report",
+            )
 
         for r in responses:
             session.conversation.append(r)

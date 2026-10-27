@@ -69,6 +69,18 @@ class AgentStatus(BaseModel):
     progress: float = 0.0  # 0.0 to 1.0
 
 
+class SessionNotification(BaseModel):
+    """A durable, user-facing event the frontend can show as a toast/modal."""
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    type: str  # "scan_complete" | "needs_input" | "report_ready"
+    title: str
+    message: str
+    domain: str | None = None  # which specialist, for "needs_input"
+    route_hint: str | None = None  # e.g. "/signals", "/questions", "/report"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    read: bool = False
+
+
 class DiagnosticSession(BaseModel):
     """
     The top-level session model tracking the entire diagnostic lifecycle.
@@ -121,8 +133,36 @@ class DiagnosticSession(BaseModel):
     # ConversationMessage so the frontend can reuse the same rendering.
     advisor_messages: list[dict] = Field(default_factory=list)
 
+    # User-facing events (scan done, specialist needs input, report ready) —
+    # a durable, pollable record separate from `conversation` so the
+    # frontend can check "anything new happen?" without pulling the whole
+    # chat history.
+    notifications: list[dict] = Field(default_factory=list)
+
     # Error tracking
     error_message: str | None = None
+
+
+_MAX_NOTIFICATIONS = 100
+
+
+def add_notification(
+    session: DiagnosticSession,
+    *,
+    type: str,
+    title: str,
+    message: str,
+    domain: str | None = None,
+    route_hint: str | None = None,
+) -> None:
+    """Append a notification to `session` and persist-ready it (caller still
+    owns calling store.update_session). Caps the list so a long-running
+    session's notification history can't grow unbounded."""
+    n = SessionNotification(
+        type=type, title=title, message=message, domain=domain, route_hint=route_hint
+    )
+    session.notifications.append(n.model_dump(mode="json"))
+    session.notifications = session.notifications[-_MAX_NOTIFICATIONS:]
 
 
 # ─── API Request / Response Models ────────────────────────────────────
