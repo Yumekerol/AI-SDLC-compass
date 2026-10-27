@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .acquisition import ensure_repo
 from .agent import agent_service
 from .config import settings
 from . import pipeline
@@ -98,7 +99,8 @@ async def chat_with_agent(req: ChatRequest):
 
 class PipelineStartRequest(BaseModel):
     session_id: str
-    repo_path: str
+    git_url: str
+    access_token: str | None = None
     team_context: dict[str, Any] = Field(default_factory=dict)
     scan_output: dict[str, Any] | None = None
     background: bool = Field(default=False, description="If true, returns immediately with accepted status")
@@ -136,9 +138,10 @@ async def pipeline_start(req: PipelineStartRequest):
     if req.background:
         async def _run():
             try:
+                repo_path = await ensure_repo(req.session_id, req.git_url, req.access_token)
                 await pipeline.run_pipeline(
                     session_id=req.session_id,
-                    repo_path=req.repo_path,
+                    repo_path=str(repo_path),
                     team_context=req.team_context,
                     scan_output=req.scan_output,
                 )
@@ -151,9 +154,10 @@ async def pipeline_start(req: PipelineStartRequest):
         return {"session_id": req.session_id, "status": "accepted"}
 
     try:
+        repo_path = await ensure_repo(req.session_id, req.git_url, req.access_token)
         result = await pipeline.run_pipeline(
             session_id=req.session_id,
-            repo_path=req.repo_path,
+            repo_path=str(repo_path),
             team_context=req.team_context,
             scan_output=req.scan_output,
         )

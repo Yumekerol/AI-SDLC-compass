@@ -32,6 +32,7 @@ from ..models.diagnostic_session import (
     ConversationQuestion,
     DiagnosticSession,
     SessionStatus,
+    SourceType,
 )
 from ..storage import BaseStore
 
@@ -159,11 +160,21 @@ class Supervisor:
             await self.store.save_profile(profile)
 
         try:
+            if session.source_type != SourceType.GIT or not session.git_url:
+                # The Agent Service clones its own copy from a git URL (see
+                # agents/src/acquisition.py) — a ZIP-uploaded session has
+                # nothing for it to clone. Out of scope for this beta rather
+                # than silently sending it a URL that doesn't exist.
+                raise RuntimeError(
+                    "The specialist pipeline currently only supports repositories "
+                    "connected by Git URL, not ZIP uploads."
+                )
             result = await self._call_agents(
                 "/pipeline/start",
                 {
                     "session_id": session.id,
-                    "repo_path": session.workspace_path,
+                    "git_url": session.git_url,
+                    "access_token": session.access_token,
                     "team_context": profile.team_context.model_dump(mode="json"),
                     "scan_output": session.scanner_output or {},
                 },
