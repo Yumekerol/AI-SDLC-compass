@@ -19,8 +19,6 @@ from pydantic import BaseModel
 from ..config import settings
 from ..models.contextual_profile import ContextualProfile
 from ..models.diagnostic_session import DiagnosticSession, SessionStatus, SourceType, add_notification
-from ..models.scanner_output import ScannerOutput
-from ..models.scanner_mapping_output import build_scanner_output
 from ..storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -33,6 +31,24 @@ async def execute_scan_task(session_id: str):
         return
 
     try:
+        if not session.scan_id:
+            # Nothing has created a scanner job for this session yet — the
+            # real (non-mocked) frontend flow goes straight from
+            # create-session to POST /scan without ever hitting
+            # /sessions/{id}/url, so scan_id is never set upstream. Create
+            # the job here instead of assuming it already exists.
+            if session.source_type != SourceType.GIT or not session.git_url:
+                raise RuntimeError("No scan_id and no git_url to create a scan job from.")
+
+            job_url = f"{settings.scanner_url_base}/job/url"
+            job_params = {"url": session.git_url}
+            if session.access_token:
+                job_params["token"] = session.access_token
+            job_response = requests.post(job_url, params=job_params)
+            job_response.raise_for_status()
+            session.scan_id = job_response.json()["scan_id"]
+            await store.update_session(session)
+
         api_endpoint: str = f"job/?scan_id={session.scan_id}"
         url: str = f"{settings.scanner_url_base}/{api_endpoint}"
 
@@ -59,12 +75,14 @@ async def execute_scan_task(session_id: str):
                 session.error_message = "Unknown (not specified by scanner)" if reason is None else reason
                 await store.update_session(session)
 
-            _signal_group_raw: dict = body.get("signalgroup")
-
-            from ..models.scanner_mapping_output import build_scanner_output
-            scan_result: ScannerOutput = build_scanner_output(metrics = _signal_group_raw, url = session.git_url, scan_id = session.scan_id, type = session.source_type)
-
-            session.scanner_output = scan_result.model_dump(mode="json")
+            # The scanner service already runs its own copy of
+            # build_scanner_output before returning this response (see
+            # scanner/src/core/job_orchestrator.py) — "signalgroup" here is
+            # the fully-mapped ScannerOutput, not raw metrics. Re-mapping it
+            # through build_scanner_output a second time (as this used to
+            # do) fed an already-mapped dict in as if it were raw metrics,
+            # so every signal group silently came back empty.
+            session.scanner_output = body.get("signalgroup")
             session.status = SessionStatus.AWAITING_SIGNAL_REVIEW
             session.error_message = None
             add_notification(
