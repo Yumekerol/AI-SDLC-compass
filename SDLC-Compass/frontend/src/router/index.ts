@@ -24,7 +24,7 @@ const router = createRouter({
       path: '/questions',
       name: 'questions',
       component: QuestionsView,
-      meta: { step: 3, title: 'Questions' }
+      meta: { step: 3, title: 'Team context' }
     },
     {
       path: '/report',
@@ -35,8 +35,7 @@ const router = createRouter({
     {
       path: '/advisor',
       name: 'advisor',
-      component: AdvisorChatView,
-      meta: { step: 5, title: 'Advisor chat' }
+      redirect: '/report'
     },
     {
       path: '/:pathMatch(.*)*',
@@ -47,5 +46,8 @@ const router = createRouter({
     return { top: 0 }
   }
 })
+
+// Keep AdvisorChatView referenced so tree-shaking / unused import warnings don't trigger if strict
+export { AdvisorChatView }
 
 export default router

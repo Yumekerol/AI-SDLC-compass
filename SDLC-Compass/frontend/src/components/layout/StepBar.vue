@@ -16,9 +16,8 @@ interface Step {
 const steps: Step[] = [
   { id: 1, title: 'Connect repository', route: '/' },
   { id: 2, title: 'Review signals', route: '/signals' },
-  { id: 3, title: 'Team context & questions', route: '/questions' },
-  { id: 4, title: 'Diagnostic report', route: '/report' },
-  { id: 5, title: 'Advisor chat', route: '/advisor' }
+  { id: 3, title: 'Team context', route: '/questions' },
+  { id: 4, title: 'Diagnostic report', route: '/report' }
 ]
 
 const currentStepNumber = computed(() => {
@@ -47,8 +46,6 @@ function canNavigate(step: Step): boolean {
   if (step.id === 3) return store.isConnected
   // Can navigate to step 4 if diagnostic generated or has answers
   if (step.id === 4) return store.hasDiagnostic || store.isConnected
-  // Can navigate to step 5 if advisor is accessible
-  if (step.id === 5) return store.hasDiagnostic || store.isConnected
   return false
 }
 

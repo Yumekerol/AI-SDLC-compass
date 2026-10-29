@@ -23,6 +23,9 @@ export interface Recommendation {
   justification: string
   examplePractice: string
   quickWin: boolean
+  actionText?: string
+  repositoryEvidence?: string
+  teamInput?: string
 }
 
 export interface PhaseReportSection {

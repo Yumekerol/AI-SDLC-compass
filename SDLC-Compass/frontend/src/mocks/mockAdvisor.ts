@@ -75,52 +75,37 @@ export const mockAdvisorContext: AdvisorContext = {
 
 export const mockInitialAdvisorMessages: AdvisorMessage[] = [
   {
-    id: 'msg-1',
-    sender: 'specialist',
-    senderName: 'Supervisor',
-    role: 'Gathering context',
-    content:
-      'Atlas Service has 48 code files, FastAPI + React, 6 test files / 42 source files, and a build.yml with a build job but no detected test or deploy job. We will start with ways of working, pain points and AI readiness.',
-    timestamp: '09:41'
-  },
-  {
-    id: 'msg-2',
+    id: 'msg-sup-user-1',
     sender: 'user',
     senderName: 'Team representative',
+    role: 'Question',
     content:
       'Can we keep the release checklist recommendation, but make it the next priority after the CI test gate? We want to automate build checks first, then make the release runbook repeatable.',
     timestamp: '09:43'
   },
   {
-    id: 'msg-3',
-    sender: 'specialist',
-    senderName: 'DevOps & Monitoring',
-    role: 'Response',
+    id: 'msg-sup-prop-1',
+    sender: 'advisor',
+    senderName: 'Synthesizer',
+    role: 'Proposal',
     content:
-      'That makes sense. If the team verifies the CI test gate first, the release checklist can be refined with clearer ownership and rollback steps. I will propose that change.',
-    timestamp: '09:44'
+      'Swap Deployment priority from High to Medium. Keep the recommendation, but move it below the CI test gate so the team automates build checks before refining the release runbook.',
+    timestamp: '09:44',
+    statusChangeProposal: {
+      title:
+        'Swap Deployment priority from High to Medium. Keep the recommendation, but move it below the CI test gate so the team automates build checks before refining the release runbook.',
+      reason:
+        'The team wants to verify the CI test gate before making the release checklist repeatable. This keeps the recommendation, but changes the order of delivery.',
+      status: 'pending'
+    }
   },
   {
-    id: 'msg-4',
-    sender: 'specialist',
-    senderName: 'QA & Testing',
-    role: 'Response',
-    content:
-      'I agree. Once the CI test gate is clearer, the release checklist can be tied to the same pipeline. That reduces the chance of manual release steps being missed.',
-    timestamp: '09:45'
-  },
-  {
-    id: 'msg-5',
+    id: 'msg-sup-synth-1',
     sender: 'advisor',
     senderName: 'Synthesizer',
     role: 'Report note',
     content:
-      'I updated the prioritisation notes in your working context. The Deployment recommendation now specifies runbook refinement following CI gate establishment.',
-    timestamp: '09:46',
-    statusChangeProposal: {
-      title: 'Swap Deployment priority from High to Medium',
-      reason: 'Verify the CI test gate before making the release checklist repeatable.',
-      status: 'applied'
-    }
+      'If approved, this change will update the Deployment recommendation and the report summary. The PDF export will reflect the selected version, not the pending proposal.',
+    timestamp: '09:45'
   }
 ]
