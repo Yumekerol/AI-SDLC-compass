@@ -34,6 +34,8 @@ from ..models.diagnostic_session import (
     SessionStatus,
     SourceType,
     add_notification,
+    NotificationType,
+    NotificationLevel,
 )
 from ..storage import BaseStore
 
@@ -120,7 +122,8 @@ class Supervisor:
             responses.append(msg.model_dump(mode="json"))
             add_notification(
                 session,
-                type="needs_input",
+                type=NotificationType.SPECIALIST_QUESTION.value,
+                level=NotificationLevel.WARNING.value,
                 title=f"{ROLE_LABELS.get(role, role)} needs your input",
                 message=result["question"],
                 domain=role,
@@ -162,7 +165,8 @@ class Supervisor:
             responses.append(sup_msg.model_dump(mode="json"))
             add_notification(
                 session,
-                type="report_ready",
+                type=NotificationType.REPORT_READY.value,
+                level=NotificationLevel.SUCCESS.value,
                 title="Your diagnostic report is ready",
                 message=sup_msg.content,
                 route_hint="/report",

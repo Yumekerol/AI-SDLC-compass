@@ -11,8 +11,10 @@ only reads/acknowledges them.
 
 from __future__ import annotations
 
+from datetime import datetime
 from fastapi import APIRouter, HTTPException
 
+from ..models.diagnostic_session import NotificationLevel, _DEFAULT_LEVELS
 from ..storage import get_storage
 
 router = APIRouter(prefix="/sessions", tags=["Notifications"])
@@ -28,6 +30,14 @@ async def get_notifications(session_id: str, unread_only: bool = False):
     notifications = session.notifications
     if unread_only:
         notifications = [n for n in notifications if not n.get("read")]
+
+    # Guarantee all notifications have level and created_at fields for the frontend
+    for n in notifications:
+        if "level" not in n:
+            n_type = n.get("type", "")
+            n["level"] = _DEFAULT_LEVELS.get(n_type, NotificationLevel.INFO.value)
+        if "created_at" not in n:
+            n["created_at"] = datetime.utcnow().isoformat()
 
     return {"session_id": session.id, "notifications": notifications}
 

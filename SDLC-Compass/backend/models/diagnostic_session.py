@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -69,13 +70,30 @@ class AgentStatus(BaseModel):
     progress: float = 0.0  # 0.0 to 1.0
 
 
+class NotificationType(str, Enum):
+    """Canonical notification types for frontend icon selection."""
+    SCAN_COMPLETE = "scan_complete"
+    SCAN_FAILED = "scan_failed"
+    SPECIALIST_QUESTION = "specialist_question"
+    REPORT_READY = "report_ready"
+
+
+class NotificationLevel(str, Enum):
+    """Notification severity/status level for frontend color selection."""
+    INFO = "info"
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+
+
 class SessionNotification(BaseModel):
-    """A durable, user-facing event the frontend can show as a toast/modal."""
+    """A durable, user-facing event the frontend can show as a toast/modal/notification."""
     id: str = Field(default_factory=lambda: str(uuid4()))
-    type: str  # "scan_complete" | "needs_input" | "report_ready"
+    type: str  # e.g. "scan_complete", "scan_failed", "specialist_question", "report_ready", or dynamic
+    level: str = NotificationLevel.INFO.value  # "info" | "success" | "warning" | "error"
     title: str
     message: str
-    domain: str | None = None  # which specialist, for "needs_input"
+    domain: str | None = None  # which specialist, for "specialist_question"
     route_hint: str | None = None  # e.g. "/signals", "/questions", "/report"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     read: bool = False
@@ -145,6 +163,19 @@ class DiagnosticSession(BaseModel):
 
 _MAX_NOTIFICATIONS = 100
 
+_DEFAULT_LEVELS: dict[str, str] = {
+    NotificationType.SCAN_COMPLETE.value: NotificationLevel.SUCCESS.value,
+    NotificationType.SCAN_FAILED.value: NotificationLevel.ERROR.value,
+    NotificationType.SPECIALIST_QUESTION.value: NotificationLevel.WARNING.value,
+    NotificationType.REPORT_READY.value: NotificationLevel.SUCCESS.value,
+    # Backward compatibility with existing "needs_input" type
+    "needs_input": NotificationLevel.WARNING.value,
+}
+
+_TYPE_ALIASES: dict[str, str] = {
+    "needs_input": NotificationType.SPECIALIST_QUESTION.value,
+}
+
 
 def add_notification(
     session: DiagnosticSession,
@@ -152,17 +183,33 @@ def add_notification(
     type: str,
     title: str,
     message: str,
+    level: str | None = None,
     domain: str | None = None,
     route_hint: str | None = None,
-) -> None:
+    created_at: datetime | None = None,
+) -> SessionNotification:
     """Append a notification to `session` and persist-ready it (caller still
     owns calling store.update_session). Caps the list so a long-running
     session's notification history can't grow unbounded."""
-    n = SessionNotification(
-        type=type, title=title, message=message, domain=domain, route_hint=route_hint
-    )
+    normalized_type = _TYPE_ALIASES.get(type, type)
+    if level is None:
+        level = _DEFAULT_LEVELS.get(normalized_type, NotificationLevel.INFO.value)
+
+    notification_kwargs: dict[str, Any] = {
+        "type": normalized_type,
+        "level": level,
+        "title": title,
+        "message": message,
+        "domain": domain,
+        "route_hint": route_hint,
+    }
+    if created_at is not None:
+        notification_kwargs["created_at"] = created_at
+
+    n = SessionNotification(**notification_kwargs)
     session.notifications.append(n.model_dump(mode="json"))
     session.notifications = session.notifications[-_MAX_NOTIFICATIONS:]
+    return n
 
 
 # ─── API Request / Response Models ────────────────────────────────────

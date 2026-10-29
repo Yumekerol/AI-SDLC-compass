@@ -18,7 +18,14 @@ from pydantic import BaseModel
 
 from ..config import settings
 from ..models.contextual_profile import ContextualProfile
-from ..models.diagnostic_session import DiagnosticSession, SessionStatus, SourceType, add_notification
+from ..models.diagnostic_session import (
+    DiagnosticSession,
+    SessionStatus,
+    SourceType,
+    add_notification,
+    NotificationType,
+    NotificationLevel,
+)
 from ..storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -68,12 +75,22 @@ async def execute_scan_task(session_id: str):
             body: dict = response.json()
 
             if response.status_code == status.HTTP_400_BAD_REQUEST:
-                #failed
+                # failed
                 reason: str | None = body.get("reason")
+                err_msg = "Unknown (not specified by scanner)" if reason is None else reason
 
                 session.status = SessionStatus.ERROR
-                session.error_message = "Unknown (not specified by scanner)" if reason is None else reason
+                session.error_message = err_msg
+                add_notification(
+                    session,
+                    type=NotificationType.SCAN_FAILED.value,
+                    level=NotificationLevel.ERROR.value,
+                    title="Scan failed",
+                    message=f"Repository scan failed: {err_msg}",
+                    route_hint="/",
+                )
                 await store.update_session(session)
+                break
 
             # The scanner service already runs its own copy of
             # build_scanner_output before returning this response (see
@@ -87,7 +104,8 @@ async def execute_scan_task(session_id: str):
             session.error_message = None
             add_notification(
                 session,
-                type="scan_complete",
+                type=NotificationType.SCAN_COMPLETE.value,
+                level=NotificationLevel.SUCCESS.value,
                 title="Scan complete",
                 message="Your repository scan is done — review the signals.",
                 route_hint="/signals",
@@ -110,6 +128,14 @@ async def execute_scan_task(session_id: str):
         logger.exception(f"Scan failed for session {session_id}: {e}")
         session.status = SessionStatus.ERROR
         session.error_message = str(e)
+        add_notification(
+            session,
+            type=NotificationType.SCAN_FAILED.value,
+            level=NotificationLevel.ERROR.value,
+            title="Scan failed",
+            message=f"Repository scan failed: {e}",
+            route_hint="/",
+        )
         await store.update_session(session)
 
 

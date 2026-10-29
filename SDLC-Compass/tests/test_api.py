@@ -1,4 +1,4 @@
-"""
+﻿"""
 Automated End-to-End API Test Suite
 
 Validates all 15 endpoints defined in the API contract against the FastAPI application.
@@ -20,7 +20,7 @@ client = TestClient(app)
 
 # A minimal but complete fake Agent Service response, matching exactly what
 # backend/orchestrator/supervisor.py expects back from /pipeline/start and
-# /pipeline/reply — see SDLC-Compass/agents/src/synthesizer.py for the real
+# /pipeline/reply â€” see SDLC-Compass/agents/src/synthesizer.py for the real
 # schema this mirrors. Tests mock the Agent Service at this HTTP boundary
 # rather than needing a live service + a real Ollama model.
 FAKE_NEEDS_INPUT = {
@@ -185,7 +185,7 @@ def test_full_diagnostic_api_lifecycle():
 
     # 3. Simulate Light Scanner results.
     # The real scan is now done by the separate scanner microservice
-    # (SDLC-Compass/scanner/), called over HTTP by backend/api/scan.py — not
+    # (SDLC-Compass/scanner/), called over HTTP by backend/api/scan.py â€” not
     # an in-process `backend.scanner` module. This test doesn't need to
     # exercise that HTTP call; it only needs scanner_output to already exist
     # so later steps (signal review, diagnose) have something to work with.
@@ -242,7 +242,7 @@ def test_full_diagnostic_api_lifecycle():
         new_callable=AsyncMock,
         side_effect=[FAKE_NEEDS_INPUT, FAKE_COMPLETE],
     ):
-        # 7. Start Diagnostic Q&A (Step 3) — returns immediately; the
+        # 7. Start Diagnostic Q&A (Step 3) â€” returns immediately; the
         # pipeline call happens in a background task.
         diag_res = client.post(f"/api/v1/sessions/{session_id}/diagnose")
         assert diag_res.status_code == 200
@@ -255,7 +255,7 @@ def test_full_diagnostic_api_lifecycle():
         assert len(conv_data["messages"]) >= 2
         assert conv_data["status"] == "diagnosing"
 
-        # 8. User Conversation Turn — answers the clarifying question;
+        # 8. User Conversation Turn â€” answers the clarifying question;
         # this is the turn that completes the pipeline.
         msg_res = client.post(
             f"/api/v1/sessions/{session_id}/conversation",
@@ -267,13 +267,18 @@ def test_full_diagnostic_api_lifecycle():
         conv_data = _wait_until_not_processing(session_id)
         assert conv_data["status"] == "report_ready"
 
-    # 8b. Notifications — a needs_input one from the clarifying question and
+    # 8b. Notifications - a specialist_question one from the clarifying question and
     # a report_ready one from the pipeline finishing should both be recorded.
     notif_res = client.get(f"/api/v1/sessions/{session_id}/notifications")
     assert notif_res.status_code == 200
     notifications = notif_res.json()["notifications"]
-    assert [n["type"] for n in notifications] == ["needs_input", "report_ready"]
+    assert [n["type"] for n in notifications] == ["specialist_question", "report_ready"]
     assert all(n["read"] is False for n in notifications)
+    # New fields: level and created_at must be present on every notification.
+    assert all("level" in n for n in notifications)
+    assert all("created_at" in n for n in notifications)
+    assert notifications[0]["level"] == "warning"   # specialist_question
+    assert notifications[1]["level"] == "success"   # report_ready
 
     unread_res = client.get(f"/api/v1/sessions/{session_id}/notifications?unread_only=true")
     assert len(unread_res.json()["notifications"]) == 2
@@ -290,14 +295,14 @@ def test_full_diagnostic_api_lifecycle():
     assert read_all_res.status_code == 200
     assert all(n["read"] for n in read_all_res.json()["notifications"])
 
-    # 9. Get Knowledge Gaps — fed by the specialists' own low-confidence
+    # 9. Get Knowledge Gaps â€” fed by the specialists' own low-confidence
     # findings and the questions they had to ask (see FAKE_COMPLETE above).
     gaps_res = client.get(f"/api/v1/sessions/{session_id}/knowledge-gaps")
     assert gaps_res.status_code == 200
     gaps = gaps_res.json()["gaps"]
     assert any(descriptions for descriptions in gaps.values())
 
-    # 10. Continue Diagnostic (Step 3 -> 4) — the pipeline already
+    # 10. Continue Diagnostic (Step 3 -> 4) â€” the pipeline already
     # synthesized as part of step 8; this just confirms the report is ready.
     synth_res = client.post(f"/api/v1/sessions/{session_id}/continue-diagnostic")
     assert synth_res.status_code == 200
