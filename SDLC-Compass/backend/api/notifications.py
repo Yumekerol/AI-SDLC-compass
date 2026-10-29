@@ -70,3 +70,34 @@ async def mark_all_notifications_read(session_id: str):
     await store.update_session(session)
 
     return {"session_id": session.id, "notifications": session.notifications}
+
+@router.delete("/{session_id}/notifications")
+async def clear_all_notifications(session_id: str):
+    store = await get_storage()
+    session = await store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session.notifications = []
+    await store.update_session(session)
+
+    return {"session_id": session.id, "notifications": []}
+
+
+@router.delete("/{session_id}/notifications/{notification_id}")
+async def delete_notification(session_id: str, notification_id: str):
+    store = await get_storage()
+    session = await store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    initial_count = len(session.notifications)
+    session.notifications = [n for n in session.notifications if n.get("id") != notification_id]
+
+    if len(session.notifications) == initial_count:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    await store.update_session(session)
+
+    return {"session_id": session.id, "notification_id": notification_id, "deleted": True}
+
