@@ -1431,7 +1431,7 @@ function goBackToQuestions() {
 /* Executive Summary Lavender Card */
 .executive-summary-card {
   background-color: #f5f3ff;
-  border: 1.5px solid #c084fc;
+  border: 1px solid #ddd6fe;
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
