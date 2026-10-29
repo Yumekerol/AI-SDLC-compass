@@ -379,3 +379,33 @@ export async function markAllNotificationsAsRead(
     n.read = true
   })
 }
+
+/**
+ * Clear all notifications
+ */
+export async function clearAllNotifications(
+  sessionId?: string
+): Promise<void> {
+  if (!USE_MOCKS && sessionId) {
+    await backendClient.clearAllNotifications(sessionId)
+    return
+  }
+  await delay(100)
+  currentNotifications = []
+}
+
+/**
+ * Delete a single notification
+ */
+export async function deleteNotification(
+  notificationId: string,
+  sessionId?: string
+): Promise<void> {
+  if (!USE_MOCKS && sessionId) {
+    await backendClient.deleteNotification(sessionId, notificationId)
+    return
+  }
+  await delay(100)
+  currentNotifications = currentNotifications.filter((n) => n.id !== notificationId)
+}
+

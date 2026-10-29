@@ -41,6 +41,11 @@ function handleActionClick(item: AppNotification, event: MouseEvent) {
   }
 }
 
+function handleDismissClick(item: AppNotification, event: MouseEvent) {
+  event.stopPropagation()
+  store.deleteNotification(item.id)
+}
+
 function getActionLabel(item: AppNotification): string {
   if (item.action_label) return item.action_label
   if (item.type === 'report_ready') return 'See report →'
@@ -59,15 +64,24 @@ function getActionLabel(item: AppNotification): string {
         <span class="panel-title">Notifications</span>
         <span v-if="store.unreadCount > 0" class="unread-pill">{{ store.unreadCount }}</span>
       </div>
-      <button
-        v-if="store.notifications.length > 0"
-        type="button"
-        class="mark-all-btn"
-        :disabled="store.unreadCount === 0"
-        @click="store.markAllAsRead"
-      >
-        Mark all as read
-      </button>
+      <div v-if="store.notifications.length > 0" class="header-actions">
+        <button
+          v-if="store.unreadCount > 0"
+          type="button"
+          class="header-action-btn"
+          @click="store.markAllAsRead"
+        >
+          Mark all as read
+        </button>
+        <span v-if="store.unreadCount > 0" class="action-divider">·</span>
+        <button
+          type="button"
+          class="header-action-btn clear-btn"
+          @click="store.clearAll"
+        >
+          Clear all
+        </button>
+      </div>
     </div>
 
     <!-- Empty State -->
@@ -97,7 +111,7 @@ function getActionLabel(item: AppNotification): string {
         @click="handleNotificationClick(item)"
         @keydown.enter="handleNotificationClick(item)"
       >
-        <!-- Top row: Icon + Title + Timestamp & Unread dot -->
+        <!-- Top row: Icon + Title + Timestamp & Unread dot & Dismiss -->
         <div class="card-top-row">
           <div class="icon-badge" :class="`badge-${item.level || 'info'}`" aria-hidden="true">
             <!-- Success / Complete Checkmark -->
@@ -156,6 +170,17 @@ function getActionLabel(item: AppNotification): string {
           <div class="card-meta">
             <span class="card-time">{{ formatRelativeTime(item.created_at) }}</span>
             <span v-if="!item.read" class="unread-dot" title="Unread notification" />
+            <button
+              type="button"
+              class="card-dismiss-btn"
+              title="Dismiss notification"
+              aria-label="Dismiss notification"
+              @click="handleDismissClick(item, $event)"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor">
+                <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z" />
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -243,25 +268,42 @@ function getActionLabel(item: AppNotification): string {
   border-radius: var(--radius-full);
 }
 
-.mark-all-btn {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.header-action-btn {
   background: none;
   border: none;
   padding: 0;
+  min-height: unset;
+  min-width: unset;
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--color-primary);
   cursor: pointer;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s ease, color 0.15s ease;
 }
 
-.mark-all-btn:hover:not(:disabled) {
+.header-action-btn:hover {
   text-decoration: underline;
 }
 
-.mark-all-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  text-decoration: none;
+.header-action-btn.clear-btn {
+  color: var(--color-text-muted);
+}
+
+.header-action-btn.clear-btn:hover {
+  color: var(--color-text-primary);
+  text-decoration: underline;
+}
+
+.action-divider {
+  font-size: 0.75rem;
+  color: var(--color-border-strong);
+  user-select: none;
 }
 
 .notifications-list {
@@ -292,13 +334,14 @@ function getActionLabel(item: AppNotification): string {
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
   user-select: none;
+  position: relative;
 }
 
 .notification-card:hover {
   transform: translateY(-1px);
 }
 
-/* Level color variations matching design */
+/* Level color variations */
 .notification-card.level-success {
   background-color: #f7fdfa;
   border-color: #d1fae5;
@@ -389,6 +432,39 @@ function getActionLabel(item: AppNotification): string {
   display: inline-block;
 }
 
+.card-dismiss-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+  min-height: unset;
+  min-width: unset;
+}
+
+.card-dismiss-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.notification-card:hover .card-dismiss-btn {
+  opacity: 0.7;
+}
+
+.card-dismiss-btn:hover {
+  opacity: 1 !important;
+  color: var(--color-text-primary);
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
 .card-message {
   font-size: 0.75rem;
   line-height: 1.45;
@@ -422,6 +498,8 @@ function getActionLabel(item: AppNotification): string {
   background: none;
   border: none;
   padding: 0;
+  min-height: unset;
+  min-width: unset;
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--color-primary);
@@ -473,4 +551,3 @@ function getActionLabel(item: AppNotification): string {
   margin: 0;
 }
 </style>
-

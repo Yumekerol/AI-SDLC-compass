@@ -429,3 +429,29 @@ export async function markAllNotificationsRead(
     { method: 'POST' }
   )
 }
+
+/**
+ * Notifications: Clear all notifications for session
+ */
+export async function clearAllNotifications(
+  sessionId: string
+): Promise<{ session_id: string; notifications: [] }> {
+  return request<{ session_id: string; notifications: [] }>(
+    `/sessions/${sessionId}/notifications`,
+    { method: 'DELETE' }
+  )
+}
+
+/**
+ * Notifications: Delete single notification
+ */
+export async function deleteNotification(
+  sessionId: string,
+  notificationId: string
+): Promise<{ session_id: string; notification_id: string; deleted: boolean }> {
+  return request<{ session_id: string; notification_id: string; deleted: boolean }>(
+    `/sessions/${sessionId}/notifications/${notificationId}`,
+    { method: 'DELETE' }
+  )
+}
+

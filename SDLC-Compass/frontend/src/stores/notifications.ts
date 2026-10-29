@@ -63,6 +63,24 @@ export const useNotificationsStore = defineStore('notifications', () => {
     }
   }
 
+  async function clearAll() {
+    notifications.value = []
+    try {
+      await api.clearAllNotifications(sessionStore.sessionId || undefined)
+    } catch (err) {
+      console.warn('Failed to clear notifications:', err)
+    }
+  }
+
+  async function deleteNotification(id: string) {
+    notifications.value = notifications.value.filter((n) => n.id !== id)
+    try {
+      await api.deleteNotification(id, sessionStore.sessionId || undefined)
+    } catch (err) {
+      console.warn('Failed to delete notification:', err)
+    }
+  }
+
   // Initial load
   fetchNotifications()
 
@@ -77,7 +95,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
     openPanel,
     fetchNotifications,
     markAsRead,
-    markAllAsRead
+    markAllAsRead,
+    clearAll,
+    deleteNotification
   }
 })
-
