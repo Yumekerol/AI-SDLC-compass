@@ -35,7 +35,8 @@ class Job(BaseModel):
     input: URLInput | Path | None = None
 
     constraint_output: ConstraintOutput | None = None
-    
+    error: str | None = None
+
     creation_time: datetime = datetime.now()
     completion_time: datetime | None = None
     

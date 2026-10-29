@@ -126,6 +126,7 @@ class JobHandler():
                 except Exception as e:
                     logger.error(f"Unhandled exception on aquire_and_validate_zip(): {e}")
 
+                    job.error = str(e)
                     job.status = JobStatus.FAILED
                     self.job_dict[scan_id] = job
                     continue
@@ -134,7 +135,8 @@ class JobHandler():
                     aquisition = aquire_and_validate_repository(scan_id, job.input.url, job.input.token)
                 except Exception as e:
                     logger.error(f"Aquisition of repository '{scan_id}' failed: {e}")
-                    
+
+                    job.error = str(e)
                     job.status = JobStatus.FAILED
                     self.job_dict[scan_id] = job
                     continue

@@ -123,6 +123,8 @@ async def execute_scan_task(session_id: str):
             logger.info(f"Scan completed successfully for session {session_id}")
 
             break
+        else:
+            raise TimeoutError("The scanner did not finish in time.")
 
     except Exception as e:
         logger.exception(f"Scan failed for session {session_id}: {e}")

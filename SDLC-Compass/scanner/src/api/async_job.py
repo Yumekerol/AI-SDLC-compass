@@ -46,16 +46,19 @@ def get_job_output(scan_id: str, response: Response):
             "reason": f"Job with id '{scan_id}' does not exist."
         }
         
+    # FAILED must be checked before the not-completed case, or a failed job
+    # reports "still in progress" (204) forever.
+    if job.status == JobStatus.FAILED:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        reason = job.error or (job.constraint_output.message if job.constraint_output else None)
+        return {
+            "reason": reason or "Scan failed for an unspecified reason."
+        }
+
     if job.status != JobStatus.COMPLETED:
         response.status_code = status.HTTP_204_NO_CONTENT
         return {
             "reason": f"Job with id '{scan_id}' has not been completed yet."
-        }
-
-    if job.status == JobStatus.FAILED:
-        response.status_code = status.HTTP_400_BAD_REQUEST
-        return {
-            "reason": job.constraint_output.message
         }
         
     return {"signalgroup": job.scan_result}
