@@ -1,4 +1,5 @@
 import type { ConnectPayload } from '@/types/common'
+import type { AppNotification } from '@/types/notifications'
 import type {
   BackendCreateSessionResponse,
   BackendSessionStatusResponse,
@@ -387,4 +388,44 @@ export async function downloadReportBlob(
 
   const blob = await response.blob()
   return { blob, filename, isPdf }
+}
+
+
+/**
+ * Notifications: Fetch session notifications
+ */
+export async function getNotifications(
+  sessionId: string,
+  unreadOnly = false
+): Promise<{ session_id: string; notifications: AppNotification[] }> {
+  const query = unreadOnly ? '?unread_only=true' : ''
+  return request<{ session_id: string; notifications: AppNotification[] }>(
+    `/sessions/${sessionId}/notifications${query}`,
+    { method: 'GET' }
+  )
+}
+
+/**
+ * Notifications: Mark a single notification as read
+ */
+export async function markNotificationRead(
+  sessionId: string,
+  notificationId: string
+): Promise<{ session_id: string; notification: AppNotification }> {
+  return request<{ session_id: string; notification: AppNotification }>(
+    `/sessions/${sessionId}/notifications/${notificationId}/read`,
+    { method: 'POST' }
+  )
+}
+
+/**
+ * Notifications: Mark all notifications as read
+ */
+export async function markAllNotificationsRead(
+  sessionId: string
+): Promise<{ session_id: string; notifications: AppNotification[] }> {
+  return request<{ session_id: string; notifications: AppNotification[] }>(
+    `/sessions/${sessionId}/notifications/read-all`,
+    { method: 'POST' }
+  )
 }

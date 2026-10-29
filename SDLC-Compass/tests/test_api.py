@@ -295,6 +295,22 @@ def test_full_diagnostic_api_lifecycle():
     assert read_all_res.status_code == 200
     assert all(n["read"] for n in read_all_res.json()["notifications"])
 
+    # 8c. Delete individual notification and clear all notifications
+    second_id = notifications[1]["id"]
+    del_res = client.delete(f"/api/v1/sessions/{session_id}/notifications/{second_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["deleted"] is True
+
+    remaining_res = client.get(f"/api/v1/sessions/{session_id}/notifications")
+    assert len(remaining_res.json()["notifications"]) == 1
+
+    clear_res = client.delete(f"/api/v1/sessions/{session_id}/notifications")
+    assert clear_res.status_code == 200
+    assert clear_res.json()["notifications"] == []
+
+    final_res = client.get(f"/api/v1/sessions/{session_id}/notifications")
+    assert final_res.json()["notifications"] == []
+
     # 9. Get Knowledge Gaps â€” fed by the specialists' own low-confidence
     # findings and the questions they had to ask (see FAKE_COMPLETE above).
     gaps_res = client.get(f"/api/v1/sessions/{session_id}/knowledge-gaps")

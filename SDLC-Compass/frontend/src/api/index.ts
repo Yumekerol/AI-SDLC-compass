@@ -5,14 +5,16 @@ import type {
   DiagnosticReport,
   AdvisorContext,
   AdvisorMessage,
-  ConnectPayload
+  ConnectPayload,
+  AppNotification
 } from '@/types'
 import {
   mockRepoSignals,
   mockQuestions,
   mockDiagnosticReport,
   mockAdvisorContext,
-  mockInitialAdvisorMessages
+  mockInitialAdvisorMessages,
+  mockNotifications
 } from '@/mocks'
 import * as backendClient from './backendClient'
 import {
@@ -39,6 +41,7 @@ let currentSignals: RepoSignals = JSON.parse(JSON.stringify(mockRepoSignals))
 let currentAnswers: UserAnswer[] = []
 let currentDiagnostic: DiagnosticReport = JSON.parse(JSON.stringify(mockDiagnosticReport))
 let currentAdvisorMessages: AdvisorMessage[] = JSON.parse(JSON.stringify(mockInitialAdvisorMessages))
+let currentNotifications: AppNotification[] = JSON.parse(JSON.stringify(mockNotifications))
 
 /**
  * Scan a repository (Git URL or ZIP file upload)
@@ -322,4 +325,57 @@ export async function exportPdfReport(
     filename: `AI-SDLC-Compass-Report-${Date.now()}.pdf`,
     isPdf: true
   }
+}
+
+
+/**
+ * Fetch notifications for current session
+ */
+export async function fetchNotifications(
+  sessionId?: string,
+  unreadOnly = false
+): Promise<AppNotification[]> {
+  if (!USE_MOCKS && sessionId) {
+    const res = await backendClient.getNotifications(sessionId, unreadOnly)
+    return res.notifications
+  }
+  await delay(150)
+  if (unreadOnly) {
+    return currentNotifications.filter((n) => !n.read)
+  }
+  return [...currentNotifications]
+}
+
+/**
+ * Mark a single notification as read
+ */
+export async function markNotificationAsRead(
+  notificationId: string,
+  sessionId?: string
+): Promise<void> {
+  if (!USE_MOCKS && sessionId) {
+    await backendClient.markNotificationRead(sessionId, notificationId)
+    return
+  }
+  await delay(100)
+  const item = currentNotifications.find((n) => n.id === notificationId)
+  if (item) {
+    item.read = true
+  }
+}
+
+/**
+ * Mark all notifications as read
+ */
+export async function markAllNotificationsAsRead(
+  sessionId?: string
+): Promise<void> {
+  if (!USE_MOCKS && sessionId) {
+    await backendClient.markAllNotificationsRead(sessionId)
+    return
+  }
+  await delay(100)
+  currentNotifications.forEach((n) => {
+    n.read = true
+  })
 }
