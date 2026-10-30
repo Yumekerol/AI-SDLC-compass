@@ -22,10 +22,8 @@ from langchain_core.tools import StructuredTool, tool
 from langchain_ollama import ChatOllama
 from langgraph.types import Command, interrupt
 
-try:
-    from langchain.agents import create_agent
-except ImportError:
-    from langgraph.prebuilt import create_react_agent as create_agent
+from langchain.agents import create_agent
+from langchain.agents.middleware import ClearToolUsesEdit, ContextEditingMiddleware
 
 from .config import settings
 from .context import RunContext
@@ -101,13 +99,36 @@ def _build_agent(spec: SpecialistSpec, ctx: RunContext, counter: list[int]):
         model=settings.chat_model,
         base_url=settings.ollama_host,
         temperature=settings.temperature,
-        num_ctx=spec.num_ctx,
+        num_ctx=spec.num_ctx or settings.num_ctx,
+        num_predict=settings.specialist_num_predict,
+        reasoning=settings.think,
+        keep_alive=settings.keep_alive,
     )
     return create_agent(
         model=model,
         tools=tools,
         system_prompt=spec.prompt,
         checkpointer=get_checkpointer(),
+        middleware=[_context_guard()],
+    )
+
+
+def _context_guard() -> ContextEditingMiddleware:
+    """Keep the conversation inside the model's context window: once it
+    nears the limit, older tool outputs (file reads, greps) are replaced by a
+    placeholder. Ollama rejects an over-long prompt outright, which failed the
+    whole pipeline. note/ask_user results are kept: they hold findings and
+    the team's answers. The approximate token count is chars/4, so trigger
+    well below num_ctx."""
+    return ContextEditingMiddleware(
+        edits=[
+            ClearToolUsesEdit(
+                trigger=int(settings.num_ctx * 0.6),
+                keep=3,
+                exclude_tools=("ask_user", "note"),
+                placeholder="[older tool output cleared to save context; run the tool again if you still need it]",
+            )
+        ]
     )
 
 
@@ -208,6 +229,35 @@ def _finish(spec: SpecialistSpec, thread_id: str, result: dict[str, Any]) -> Rep
     )
 
 
+ASK_NUDGE = (
+    "Before you finish: you haven't asked the team anything yet. Call ask_user now with the one "
+    "question whose answer would most change your findings: something the repository can't show, "
+    "such as how the team actually works. Use the real ask_user tool call, not text in your reply."
+)
+
+
+async def _nudge_if_silent(spec: SpecialistSpec, agent, config: dict, result: dict[str, Any]) -> dict[str, Any]:
+    """Send a specialist that finished without asking anything back once to ask.
+
+    Left to itself the model mostly reads missing evidence as the answer
+    ("no tests in the repo") and never asks whether it exists elsewhere
+    ("we test manually before each release"), which is the context the
+    diagnostic is for. One nudge per thread at most: the marker message in
+    the history stops it repeating, and if the model still doesn't ask, the
+    specialist simply finishes.
+    """
+    if not settings.require_question or _extract_interrupt_question(result):
+        return result
+    messages = result.get("messages", [])
+    if _extract_questions_asked(messages):
+        return result
+    if any(getattr(m, "type", None) == "human" and m.content == ASK_NUDGE for m in messages):
+        return result
+
+    logger.info("Specialist %s finished without a question; asking it to ask one.", spec.role)
+    return await agent.ainvoke({"messages": [{"role": "user", "content": ASK_NUDGE}]}, config=config)
+
+
 async def run_specialist(spec: SpecialistSpec, task: str, ctx: RunContext) -> Report | NeedsInput:
     """Run one specialist from a fresh thread until it finishes or pauses on ask_user."""
     thread_id = f"{spec.role}:{id(ctx)}:{ctx.root.name}"
@@ -216,6 +266,7 @@ async def run_specialist(spec: SpecialistSpec, task: str, ctx: RunContext) -> Re
     config = {"configurable": {"thread_id": thread_id}}
 
     result = await agent.ainvoke({"messages": [{"role": "user", "content": task}]}, config=config)
+    result = await _nudge_if_silent(spec, agent, config, result)
     return _finish(spec, thread_id, result)
 
 
@@ -243,4 +294,5 @@ async def resume_specialist(spec: SpecialistSpec, thread_id: str, answer: str, c
     resume = {pending[0].id: answer} if len(pending) > 1 else answer
 
     result = await agent.ainvoke(Command(resume=resume), config=config)
+    result = await _nudge_if_silent(spec, agent, config, result)
     return _finish(spec, thread_id, result)

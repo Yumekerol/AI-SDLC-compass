@@ -73,6 +73,9 @@ class AgentService:
                 model=settings.chat_model,
                 base_url=settings.ollama_host,
                 temperature=settings.temperature,
+                num_ctx=settings.num_ctx,
+                reasoning=settings.think,
+                keep_alive=settings.keep_alive,
             )
             tools = list(build_tools(self._get_ctx(session_id)).values()) + [word_count]
             self._agents[session_id] = create_agent(

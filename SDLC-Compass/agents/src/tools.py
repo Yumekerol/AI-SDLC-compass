@@ -15,6 +15,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
@@ -22,9 +23,32 @@ from .context import RunContext
 
 IGNORE = {".git", "__pycache__", "node_modules", ".venv", "venv", ".idea"}
 MAX_ENTRIES = 200
-MAX_CHARS = 80000
-MAX_GREP_MATCHES = 100
-GREP_SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".ico", ".woff", ".woff2"}
+# ~4k tokens. A bigger read_file result overflowed the model's context window:
+# Ollama then truncates the prompt (dropping the instructions) and has to
+# re-process all of it on every following call.
+MAX_CHARS = 16000
+MAX_GREP_MATCHES = 60
+GREP_SKIP_SUFFIXES = {
+    ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".ico", ".woff", ".woff2",
+    # Model weights and other binaries: large, never useful to grep.
+    ".pt", ".pth", ".bin", ".onnx", ".h5", ".pkl", ".npy", ".safetensors",
+}
+
+
+MAX_LIST_ITEMS = 20
+
+
+def _compact(value: Any) -> Any:
+    """Shorten every long list in a JSON-like value to its first
+    MAX_LIST_ITEMS items plus a note of how many were left out."""
+    if isinstance(value, dict):
+        return {k: _compact(v) for k, v in value.items()}
+    if isinstance(value, list):
+        items = [_compact(v) for v in value[:MAX_LIST_ITEMS]]
+        if len(value) > MAX_LIST_ITEMS:
+            items.append(f"...and {len(value) - MAX_LIST_ITEMS} more")
+        return items
+    return value
 
 
 def _safe_path(ctx: RunContext, p: str) -> Path:
@@ -173,7 +197,13 @@ def build_tools(ctx: RunContext) -> dict[str, BaseTool]:
         """
         if not ctx.scan_output:
             return "(no scanner output available for this run)"
-        return json.dumps(ctx.scan_output, default=str)
+        # Compacted: the raw output lists every file it saw (640 paths for a
+        # mid-sized repo, ~20k tokens), which alone overflowed the model's
+        # context window on the specialist's first call.
+        text = json.dumps(_compact(ctx.scan_output), default=str)
+        if len(text) > MAX_CHARS:
+            return text[:MAX_CHARS] + "\n...[truncated]"
+        return text
 
     @tool
     def current_time() -> str:

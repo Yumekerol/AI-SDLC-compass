@@ -43,7 +43,9 @@ class SpecialistSpec:
     setting: we don't yet know whether capping helps or hurts, so it should
     be trivial to try both per specialist."""
 
-    num_ctx: int = 16384
+    num_ctx: int | None = None
+    """None = settings.num_ctx. Override only with care: a different num_ctx
+    makes Ollama reload the model between specialists."""
 
     @property
     def prompt(self) -> str:

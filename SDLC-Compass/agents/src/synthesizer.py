@@ -116,6 +116,10 @@ async def synthesize(reports: list[Report]) -> dict:
         model=settings.chat_model,
         base_url=settings.ollama_host,
         temperature=settings.temperature,
+        num_ctx=settings.num_ctx,
+        num_predict=settings.synthesis_num_predict,
+        reasoning=settings.think,
+        keep_alive=settings.keep_alive,
     )
     structured_model = model.with_structured_output(SynthesisOutput)
 

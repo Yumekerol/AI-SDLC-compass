@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from .acquisition import ensure_repo
 from .agent import agent_service
 from .config import settings
-from . import pipeline
+from . import pipeline, pipeline_store
 from .persistence import init_checkpointer, close_checkpointer
 
 logging.basicConfig(
@@ -119,8 +119,30 @@ class PipelineReplyRequest(BaseModel):
     background: bool = Field(default=False, description="If true, returns immediately with accepted status")
 
 
-# Background tasks keyed by session_id so we can detect double-starts.
+# Running pipeline work keyed by session_id: background tasks, and the
+# request handler itself in the default blocking mode, so a run can be both
+# detected (no double-starts) and cancelled (/pipeline/cancel).
 _running_tasks: dict[str, asyncio.Task] = {}
+
+
+def _register_current(session_id: str) -> None:
+    task = asyncio.current_task()
+    if task is not None:
+        _running_tasks[session_id] = task
+
+
+def _unregister_current(session_id: str) -> None:
+    if _running_tasks.get(session_id) is asyncio.current_task():
+        _running_tasks.pop(session_id, None)
+
+
+def _cancelled(session_id: str) -> HTTPException:
+    """Turn a /pipeline/cancel of this request into a clean 409 reply."""
+    task = asyncio.current_task()
+    if task is not None:
+        task.uncancel()
+    logger.info("Pipeline request for session %s stopped by cancel", session_id)
+    return HTTPException(status_code=409, detail="Pipeline cancelled")
 
 
 @app.post("/pipeline/start", tags=["Pipeline"])
@@ -160,6 +182,7 @@ async def pipeline_start(req: PipelineStartRequest):
         _running_tasks[req.session_id] = asyncio.create_task(_run())
         return {"session_id": req.session_id, "status": "accepted"}
 
+    _register_current(req.session_id)
     try:
         repo_path = await ensure_repo(req.session_id, req.git_url, req.access_token)
         result = await pipeline.run_pipeline(
@@ -169,9 +192,13 @@ async def pipeline_start(req: PipelineStartRequest):
             scan_output=req.scan_output,
         )
         return result.model_dump(mode="json")
+    except asyncio.CancelledError:
+        raise _cancelled(req.session_id)
     except Exception as e:
         logger.exception("Pipeline start failed for session %s: %s", req.session_id, e)
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    finally:
+        _unregister_current(req.session_id)
 
 
 @app.post("/pipeline/reply", tags=["Pipeline"])
@@ -200,14 +227,41 @@ async def pipeline_reply(req: PipelineReplyRequest):
         _running_tasks[req.session_id] = asyncio.create_task(_resume())
         return {"session_id": req.session_id, "status": "accepted"}
 
+    _register_current(req.session_id)
     try:
         result = await pipeline.resume_pipeline(session_id=req.session_id, answer=req.answer)
         return result.model_dump(mode="json")
+    except asyncio.CancelledError:
+        raise _cancelled(req.session_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.exception("Pipeline resume failed for session %s: %s", req.session_id, e)
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    finally:
+        _unregister_current(req.session_id)
+
+
+class PipelineCancelRequest(BaseModel):
+    session_id: str
+
+
+@app.post("/pipeline/cancel", tags=["Pipeline"])
+async def pipeline_cancel(req: PipelineCancelRequest):
+    """
+    Stop a session's pipeline: interrupts the specialist that is running
+    (which also aborts its in-flight Ollama request) and drops any paused
+    state, so an abandoned diagnostic stops taking model time from others.
+    Safe to call for a session that isn't running.
+    """
+    task = _running_tasks.get(req.session_id)
+    was_running = bool(task and not task.done())
+    if was_running:
+        task.cancel()
+    pipeline_store.delete_state(req.session_id)
+    pipeline_store.set_job_status(req.session_id, "cancelled")
+    logger.info("Pipeline for session %s cancelled (was running: %s)", req.session_id, was_running)
+    return {"session_id": req.session_id, "cancelled": True, "was_running": was_running}
 
 
 

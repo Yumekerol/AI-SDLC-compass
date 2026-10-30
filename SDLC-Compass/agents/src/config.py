@@ -22,6 +22,23 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     chat_model: str = "qwen3:14b"
     temperature: float = 0.0
+    think: bool = False
+    """qwen3's hidden reasoning tokens were ~80% of generation time per call
+    (measured) and never reach the report, so thinking is off by default."""
+    num_ctx: int = 16384
+    """One context size for every model call: Ollama reloads the model whenever
+    num_ctx changes between requests. 8192 proved too small once a specialist
+    read a few files (the prompt got truncated and re-processed every call)."""
+    keep_alive: str = "30m"
+    specialist_num_predict: int = 1500
+    """Max tokens per specialist reply (a tool call, a note, or a short
+    summary). Without a cap the model occasionally falls into repeating
+    itself and generates until the context is full: one call took 4+ min."""
+    synthesis_num_predict: int = 6000
+    """The synthesizer returns the whole report as JSON, so it needs more."""
+    require_question: bool = True
+    """Send a specialist that finishes without asking the team anything back
+    once to ask a question (see runner._nudge_if_silent)."""
 
     # Paths & Workspaces
     base_dir: Path = Path(__file__).parent.parent
