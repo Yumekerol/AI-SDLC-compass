@@ -213,6 +213,18 @@ export interface BackendConversationResponse {
   processing: boolean
   status: string
   error_message?: string | null
+  // Where the Agent Service's pipeline is right now; null outside the
+  // diagnosing step or when the Agent Service can't be reached.
+  pipeline_progress?: BackendPipelineProgress | null
+}
+
+export interface BackendPipelineProgress {
+  phase: 'starting' | 'specialist' | 'synthesizing' | 'waiting_for_answer' | 'complete' | 'error'
+  step: number
+  total_steps: number
+  current_role: string | null
+  current_label: string | null
+  completed_specialists: number
 }
 
 export interface BackendSendMessageRequest {

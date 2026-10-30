@@ -1,176 +1,26 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
+import { useDiagnosticStore } from '@/stores/diagnostic'
 import * as api from '@/api'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import TopicsProgress from '@/components/chat/TopicsProgress.vue'
-import { mockAdvisorContext } from '@/mocks'
-import type { SpecialistActivity, UnresolvedKnowledgeGap } from '@/types/advisor'
-import type { BackendConversationMessage } from '@/api/types'
 
 const router = useRouter()
 const store = useSessionStore()
+const diagnostic = useDiagnosticStore()
 
-type TabKey = 'supervisor' | 'requirements' | 'code' | 'testing' | 'devops'
-
-interface DisplayMessage {
-  id: string
-  tabId: TabKey
-  sender: 'agent' | 'user'
-  agentInitial?: string
-  agentName: string
-  roleBadge?: string
-  text: string
-  timestamp: string
-  isSkipped?: boolean
-}
-
-const tabs = [
-  { id: 'supervisor' as const, label: 'Supervisor' },
-  { id: 'requirements' as const, label: 'Requirements & Design' },
-  { id: 'code' as const, label: 'Code & Refactoring' },
-  { id: 'testing' as const, label: 'QA & Testing' },
-  { id: 'devops' as const, label: 'DevOps & Monitoring' }
-]
-
-const activeTab = ref<TabKey>('supervisor')
 const composerInput = ref('')
 const draftSavedMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 
 const isMock = computed(() => store.isMock)
 
-// Specialists activity data (defaults to mockAdvisorContext which includes capacityPercent)
-const specialists = ref<SpecialistActivity[]>(
-  JSON.parse(JSON.stringify(mockAdvisorContext.specialists))
+// The report can only be generated once every specialist has finished.
+const canContinue = computed(
+  () => api.USE_MOCKS || (diagnostic.status === 'report_ready' && !diagnostic.processing)
 )
-
-// Unresolved knowledge gaps data
-const knowledgeGaps = ref<UnresolvedKnowledgeGap[]>(
-  JSON.parse(JSON.stringify(mockAdvisorContext.unresolvedGaps))
-)
-
-// Backend message ids already rendered, so repeated polls (one per turn)
-// never duplicate a bubble that's already on screen.
-const knownMessageIds = new Set<string>()
-
-// Multi-tab conversation message threads matching Figma mockups
-const chatMessages = ref<DisplayMessage[]>([
-  // Supervisor tab
-  {
-    id: 'msg-sup-1',
-    tabId: 'supervisor',
-    sender: 'agent',
-    agentInitial: 'S',
-    agentName: 'Supervisor',
-    roleBadge: 'Gathering context',
-    text: 'Atlas Service has 48 code files, FastAPI + React, 6 test files / 42 source files, and a build.yml with a build job but no detected test or deploy job. We\'ll start with ways of working, pain points and AI readiness.',
-    timestamp: '09:41'
-  },
-  {
-    id: 'msg-sup-2',
-    tabId: 'supervisor',
-    sender: 'agent',
-    agentInitial: 'S',
-    agentName: 'Supervisor',
-    roleBadge: 'Context gathered',
-    text: 'The conversation has captured ways of working, pain points and AI readiness. Specialist agents can now examine evidence, flag unresolved gaps, and ask targeted follow-up questions before the diagnostic is generated.',
-    timestamp: '09:50'
-  },
-
-  // Requirements & Design tab
-  {
-    id: 'msg-req-1',
-    tabId: 'requirements',
-    sender: 'agent',
-    agentInitial: 'R',
-    agentName: 'Requirements & Design',
-    roleBadge: 'Needs clarification',
-    text: 'Can you confirm whether acceptance criteria are documented consistently across the team and whether design decisions are captured somewhere the delivery team can reference?',
-    timestamp: '09:42'
-  },
-  {
-    id: 'msg-req-2',
-    tabId: 'requirements',
-    sender: 'user',
-    agentInitial: 'TL',
-    agentName: 'Team representative',
-    roleBadge: 'Response',
-    text: 'We use Scrum. Acceptance criteria are usually documented in Jira, but design decisions are often captured in notes from review sessions and not always linked back to the implementation. We selected ambiguous acceptance criteria and undocumented decisions as pain points.',
-    timestamp: '09:43'
-  },
-
-  // Code & Refactoring tab
-  {
-    id: 'msg-code-1',
-    tabId: 'code',
-    sender: 'agent',
-    agentInitial: 'C',
-    agentName: 'Code & Refactoring',
-    roleBadge: 'Needs clarification',
-    text: 'You mentioned repetitive implementation. Is that mostly in the Python service, the React frontend, or both? Are there any areas where the team feels the codebase is already too complex to refactor without more evidence?',
-    timestamp: '09:44'
-  },
-  {
-    id: 'msg-code-2',
-    tabId: 'code',
-    sender: 'user',
-    agentInitial: 'TL',
-    agentName: 'Team representative',
-    roleBadge: 'Response',
-    text: 'Repetitive implementation is more visible in the Python service. We also selected manual regression and low CI test confidence as pain points because tests run locally, but we expect them to run in CI and have not verified the workflow yet.',
-    timestamp: '09:45'
-  },
-
-  // QA & Testing tab
-  {
-    id: 'msg-qa-1',
-    tabId: 'testing',
-    sender: 'agent',
-    agentInitial: 'Q',
-    agentName: 'QA & Testing',
-    roleBadge: 'Needs clarification',
-    text: 'Are the 6 test files / 42 source files mostly unit tests, integration tests, or end-to-end tests? Does the team rely on any external testing workflows that are not visible in this repository?',
-    timestamp: '09:46'
-  },
-  {
-    id: 'msg-qa-2',
-    tabId: 'testing',
-    sender: 'user',
-    agentInitial: 'TL',
-    agentName: 'Team representative',
-    roleBadge: 'Response',
-    text: 'The test files are mostly unit and integration tests. We do expect CI tests, but the workflow was not verified. Monitoring is managed outside this repository, which is why we also selected noisy alerts and manual release checklist as pain points.',
-    timestamp: '09:47'
-  },
-
-  // DevOps & Monitoring tab
-  {
-    id: 'msg-devops-1',
-    tabId: 'devops',
-    sender: 'agent',
-    agentInitial: 'D',
-    agentName: 'DevOps & Monitoring',
-    roleBadge: 'Needs clarification',
-    text: 'Is the manual release checklist used for every deployment, or only for production? Are there any external monitoring dashboards or alerting rules that the diagnostic should reference before making recommendations?',
-    timestamp: '09:48'
-  },
-  {
-    id: 'msg-devops-2',
-    tabId: 'devops',
-    sender: 'user',
-    agentInitial: 'TL',
-    agentName: 'Team representative',
-    roleBadge: 'Response',
-    text: 'The checklist is mainly used for production. Monitoring lives outside this repository, which is why we mentioned noisy alerts. We are using GitHub Copilot in a pilot and ChatGPT for non-code drafting, but AI adoption is still exploratory.',
-    timestamp: '09:49'
-  }
-])
-
-const currentTabMessages = computed(() => {
-  return chatMessages.value.filter((m) => m.tabId === activeTab.value)
-})
 
 function scrollToBottom() {
   nextTick(() => {
@@ -180,180 +30,21 @@ function scrollToBottom() {
   })
 }
 
-function selectTab(tabKey: TabKey) {
-  activeTab.value = tabKey
-  scrollToBottom()
-}
-
-// Maps one backend conversation message onto a display bubble + tab, and
-// appends it if it isn't already on screen. Shared by the initial load and
-// by every poll after a sent message, so a turn that produces several
-// messages (or none, if the pipeline is still mid-specialist) is handled
-// the same way everywhere.
-function ingestBackendMessage(m: BackendConversationMessage, options: { skipUser?: boolean } = {}) {
-  if (knownMessageIds.has(m.id)) return
-  if (options.skipUser && m.role === 'user') return
-
-  let tabId: TabKey = 'supervisor'
-  let agentName = m.agent_label || 'Specialist'
-  let initial = 'A'
-  let roleBadge = 'Specialist agent'
-
-  if (m.role === 'user') {
-    agentName = 'Team representative'
-    initial = 'TL'
-    roleBadge = 'Response'
-  } else if (m.role === 'supervisor') {
-    tabId = 'supervisor'
-    agentName = 'Supervisor'
-    initial = 'S'
-    roleBadge = 'Gathering context'
-  } else if (m.agent_domain) {
-    initial = m.agent_domain.charAt(0).toUpperCase()
-    roleBadge = `${m.agent_label || 'Specialist'} · Needs clarification`
-    if (m.agent_domain.includes('req')) tabId = 'requirements'
-    else if (m.agent_domain.includes('code')) tabId = 'code'
-    else if (m.agent_domain.includes('test') || m.agent_domain.includes('qa')) tabId = 'testing'
-    else if (m.agent_domain.includes('devops')) tabId = 'devops'
-  }
-
-  knownMessageIds.add(m.id)
-  chatMessages.value.push({
-    id: m.id,
-    tabId,
-    sender: m.role === 'user' ? 'user' : 'agent',
-    agentInitial: initial,
-    agentName,
-    roleBadge,
-    text: m.content,
-    timestamp: m.timestamp
-      ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : '09:41'
-  })
-}
-
-async function refreshKnowledgeGaps(sessionId: string) {
-  const gapsRes = await api.backendClient.getKnowledgeGaps(sessionId)
-  const gapList: UnresolvedKnowledgeGap[] = []
-  let idx = 1
-  for (const [domain, descriptions] of Object.entries(gapsRes.gaps || {})) {
-    if (Array.isArray(descriptions)) {
-      descriptions.forEach((desc: string) => {
-        gapList.push({
-          id: `gap-${idx++}`,
-          title: `${domain.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())} gap`,
-          description: desc,
-          status: 'Open'
-        })
-      })
-    }
-  }
-  // Always reflect the real backend's state here, even when empty —
-  // otherwise the sidebar keeps showing the mock placeholder gaps seeded
-  // at the top of this component, which looks like real findings.
-  knowledgeGaps.value = gapList
-}
+watch(() => diagnostic.messages.length, scrollToBottom)
+watch(() => diagnostic.processing, scrollToBottom)
 
 onMounted(async () => {
-  store.ensureSampleSignals()
   store.setStep(3)
-
-  // Real repo adaptation for the initial Supervisor greeting if available
-  if (store.repoSignals && !isMock.value) {
-    const s = store.repoSignals
-    const supMsg = chatMessages.value.find((m) => m.id === 'msg-sup-1')
-    if (supMsg) {
-      supMsg.text = `${s.repoName} has ${s.totalSupportedFiles} code files, ${s.stack.frameworks.join(' + ') || 'modern frameworks'}, ${s.quality.testFilesCount} test files / ${s.quality.sourceFilesCount} source files. We'll start with ways of working, pain points and AI readiness.`
-    }
-  }
-
-  // Real backend initialization if connected
-  if (!api.USE_MOCKS && store.sessionId) {
-    // Replace the mock-seeded conversation entirely — see the matching fix
-    // on knowledgeGaps below for why we don't just leave it standing.
-    chatMessages.value = []
-    knownMessageIds.clear()
-    store.isLoading = true
-    store.loadingMessage = 'Starting the diagnostic specialists...'
-
-    try {
-      // Re-mounting this view (navigating away and back) must not re-kick
-      // the whole pipeline — only call /diagnose if this session genuinely
-      // has no conversation yet.
-      const existing = await api.backendClient.getConversation(store.sessionId).catch(() => null)
-
-      if (!existing || existing.messages.length === 0) {
-        await api.backendClient.startDiagnostic(store.sessionId)
-      } else {
-        existing.messages.forEach((m) => ingestBackendMessage(m))
-      }
-
-      // /diagnose returns immediately; the actual specialist pipeline call
-      // runs in the background and can take as long as a full specialist
-      // run (or several, back to back). Poll until it settles. If the
-      // existing conversation was already done (processing already false),
-      // this resolves on its first check.
-      const convRes = await api.backendClient.pollConversation(store.sessionId, (msg) => {
-        store.loadingMessage = msg
-      })
-      convRes.messages.forEach((m) => ingestBackendMessage(m))
-      await refreshKnowledgeGaps(store.sessionId)
-    } catch (err) {
-      console.warn('Backend diagnostic load failed, falling back to local state:', err)
-    } finally {
-      store.isLoading = false
-    }
-  }
-
+  await store.ensureSampleSignals()
+  await diagnostic.load()
   scrollToBottom()
 })
 
-// Sending message from composer
 async function handleSendMessage() {
   const text = composerInput.value.trim()
-  if (!text || store.isLoading) return
-
-  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-
-  // Append user response to active tab thread
-  chatMessages.value.push({
-    id: `msg-user-${Date.now()}`,
-    tabId: activeTab.value,
-    sender: 'user',
-    agentInitial: 'TL',
-    agentName: 'Team representative',
-    roleBadge: 'Response',
-    text,
-    timestamp: now
-  })
-
+  if (!text || diagnostic.processing) return
   composerInput.value = ''
-  scrollToBottom()
-
-  // Real backend turn if connected
-  if (!api.USE_MOCKS && store.sessionId) {
-    store.isLoading = true
-    store.loadingMessage = 'Waiting for the specialists to respond...'
-    try {
-      await api.backendClient.sendConversationMessage(store.sessionId, text)
-
-      // The reply is handled by a background task on the backend (it may
-      // run the paused specialist to completion, then the next one, then
-      // the synthesizer, all in one turn) — poll until it settles. The
-      // user's own message is skipped since we already rendered it above.
-      const res = await api.backendClient.pollConversation(store.sessionId, (msg) => {
-        store.loadingMessage = msg
-      })
-      res.messages.forEach((m) => ingestBackendMessage(m, { skipUser: true }))
-      await refreshKnowledgeGaps(store.sessionId)
-
-      scrollToBottom()
-    } catch (err) {
-      console.warn('Failed to send conversation message to backend:', err)
-    } finally {
-      store.isLoading = false
-    }
-  }
+  await diagnostic.sendMessage(text)
 }
 
 function handleKeyDown(e: KeyboardEvent) {
@@ -367,7 +58,7 @@ async function handleSaveDraft() {
   draftSavedMessage.value = 'Saving...'
   if (!api.USE_MOCKS && store.sessionId) {
     try {
-      await api.backendClient.saveDraft(store.sessionId, chatMessages.value)
+      await api.backendClient.saveDraft(store.sessionId, diagnostic.messages)
     } catch {
       // Ignored
     }
@@ -407,100 +98,84 @@ function goBackToSignals() {
       <span class="step-badge">TEAM DIAGNOSTIC / STEP 3 OF 4</span>
       <h1 class="page-title">Clarify the team context with the diagnostic agents</h1>
       <p class="page-subtitle">
-        The supervisor coordinates questions from four specialist agents. Answer the open questions,
-        review the evidence being examined, and continue the conversation until the diagnostic is ready.
+        Four specialists review the repository one after another and ask you a question when the code
+        alone doesn't tell them enough. Answer in the chat; the report is ready once all four are done.
       </p>
     </div>
 
     <!-- 2-Column Chat & Side Panel Grid -->
     <div class="questions-grid">
-      <!-- Left Column: Diagnostic conversation, Message composer & Path to diagnostic -->
       <section class="chat-column">
-        <!-- 1. Unified Diagnostic Conversation Card -->
+        <!-- One conversation: every agent's questions, in order -->
         <div class="card chat-card-container">
-          <!-- Chat Header -->
           <div class="chat-header">
             <div>
               <h2 class="chat-box-title">Diagnostic conversation</h2>
-              <p class="chat-box-desc">Supervisor coordinates questions from Requirements, Code, QA and DevOps.</p>
+              <p class="chat-box-desc">The specialists ask their questions here, one at a time.</p>
             </div>
-            <span class="badge badge-purple">4 active agents</span>
           </div>
 
-          <!-- Specialist Navigation Tabs -->
-          <div class="chat-tabs-bar" role="tablist" aria-label="Specialist chat tabs">
-            <button
-              v-for="tab in tabs"
-              :key="tab.id"
-              type="button"
-              role="tab"
-              :aria-selected="activeTab === tab.id"
-              class="chat-tab-btn"
-              :class="{ 'tab-active': activeTab === tab.id }"
-              @click="selectTab(tab.id)"
-            >
-              {{ tab.label }}
-            </button>
-          </div>
-
-          <!-- Messages Stream (Fixed height 380px, vertical scroll, anchored to bottom) -->
-          <div
-            ref="messagesContainer"
-            class="messages-stream"
-            aria-label="Conversation messages"
-          >
+          <div ref="messagesContainer" class="messages-stream" aria-label="Conversation messages" aria-live="polite">
             <div class="messages-inner-anchor">
+              <p v-if="!diagnostic.messages.length && !diagnostic.error" class="empty-chat">
+                Starting the diagnostic…
+              </p>
               <ChatMessage
-                v-for="msg in currentTabMessages"
+                v-for="msg in diagnostic.messages"
                 :key="msg.id"
                 :sender="msg.sender"
                 :agent-initial="msg.agentInitial"
                 :agent-name="msg.agentName"
-                :role-badge="msg.roleBadge"
                 :text="msg.text"
                 :timestamp="msg.timestamp"
-                :is-skipped="msg.isSkipped"
               />
+              <div v-if="diagnostic.processing" class="agent-status-row">
+                <span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+                <span class="status-text">{{ diagnostic.statusText }}</span>
+                <button type="button" class="link-btn" @click="diagnostic.cancel()">Stop</button>
+              </div>
+              <div v-else-if="diagnostic.status === 'cancelled' || diagnostic.status === 'error'" class="agent-status-row">
+                <span class="status-text">The diagnostic is not running.</span>
+                <button type="button" class="link-btn" @click="diagnostic.restart()">Restart diagnostic</button>
+              </div>
+              <p v-if="diagnostic.error" class="chat-error" role="alert">{{ diagnostic.error }}</p>
             </div>
           </div>
 
-          <!-- Input Bar (Separated from messages area by a thin border) -->
           <div class="chat-input-bar-container">
             <div class="input-bar-row">
               <textarea
                 v-model="composerInput"
                 rows="2"
                 class="chat-input-textarea"
-                placeholder="Add a note, ask a question, or clarify a pain point"
-                :disabled="store.isLoading"
-                aria-label="Add a note or response to the agent"
+                :placeholder="diagnostic.processing ? 'Wait for the specialist to finish…' : 'Answer the question above'"
+                :disabled="diagnostic.processing"
+                aria-label="Your answer to the specialist"
                 @keydown="handleKeyDown"
               ></textarea>
               <button
                 type="button"
                 class="btn-primary input-send-btn"
-                :disabled="store.isLoading || !composerInput.trim()"
+                :disabled="diagnostic.processing || !composerInput.trim()"
                 @click="handleSendMessage"
               >
                 Send
               </button>
             </div>
 
-            <!-- Small helper text row under the input bar -->
             <div class="input-helpers-row">
               <span class="footnote-text">
-                <template v-if="isMock">Sample data · </template>Keep it concise. Do not include personal data, client identifiers, secrets or sensitive source code. Remove sensitive details before submitting.
+                <template v-if="isMock">Sample data · </template>Keep it concise. Do not include personal data, client identifiers, secrets or sensitive source code.
               </span>
-              <span class="draft-indicator">Draft saved automatically</span>
             </div>
           </div>
         </div>
 
-        <!-- 2. Path to an evolving diagnostic Card (Unchanged separate card below chat) -->
         <div class="card evolving-card">
           <h3 class="evolving-title">Path to an evolving diagnostic</h3>
           <p class="evolving-desc">
-            Continue the conversation, answer follow-up questions, and review specialist findings. The diagnostic will evolve as the team provides more context.
+            <template v-if="canContinue">All specialists are done. Continue to review the diagnostic report.</template>
+            <template v-else>The report becomes available once every specialist has finished.</template>
           </p>
 
           <div class="evolving-actions">
@@ -513,17 +188,11 @@ function goBackToSignals() {
             <button
               type="button"
               class="btn-primary continue-btn"
-              :disabled="store.isLoading"
+              :disabled="store.isLoading || !canContinue"
               @click="handleGenerateDiagnostic"
             >
               Continue diagnostic
             </button>
-          </div>
-
-          <div class="evolving-footer">
-            <span class="footnote-text">
-              <template v-if="isMock">Sample data · </template>The diagnostic is not final. You can keep chatting, question the project, and edit the report before it is shared.
-            </span>
           </div>
         </div>
       </section>
@@ -531,9 +200,8 @@ function goBackToSignals() {
       <!-- Right Column: Context, Specialist Activity & Knowledge Gaps -->
       <TopicsProgress
         :signals="store.repoSignals || undefined"
-        :active-tab="activeTab"
-        :specialists="specialists"
-        :knowledge-gaps="knowledgeGaps"
+        :progress="diagnostic.progress"
+        :knowledge-gaps="diagnostic.gaps"
         :is-mock="isMock"
       />
     </div>
@@ -640,45 +308,9 @@ function goBackToSignals() {
   margin-top: 0.125rem;
 }
 
-/* Specialist Tabs Bar */
-.chat-tabs-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  background-color: #f8fafc;
-  border: 1px solid #f1f5f9;
-  border-radius: var(--radius-md);
-  padding: 0.25rem;
-  overflow-x: auto;
-}
-
-.chat-tab-btn {
-  background-color: #F0EAFB;
-  border: none;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #6D3CC8;
-  padding: 0.4375rem 0.875rem;
-  border-radius: 6px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.15s ease;
-  min-height: auto;
-}
-
-.chat-tab-btn:hover:not(.tab-active) {
-  color: #5618caff;
-  background-color: #dbcbf8ff;
-}
-
-.chat-tab-btn.tab-active {
-  background-color: var(--color-primary);
-  color: #F0EAFB;
-}
-
-/* Messages Stream: Fixed height 380px, internal vertical scroll, messages anchored to bottom */
+/* Messages Stream: fixed height, internal vertical scroll, anchored to bottom */
 .messages-stream {
-  height: 380px;
+  height: 440px;
   overflow-y: auto;
   padding-right: 0.5rem;
   scroll-behavior: smooth;
@@ -690,7 +322,85 @@ function goBackToSignals() {
   margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
+}
+
+/* Live status row under the last message while an agent works */
+.agent-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  padding: 0.25rem 0.25rem 0;
+}
+
+.status-text {
+  flex: 1;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  min-height: auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.typing-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--color-primary);
+  animation: blink 1.2s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.chat-error {
+  font-size: 0.8125rem;
+  color: #b91c1c;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.75rem;
+}
+
+.empty-chat {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: 1rem 0;
 }
 
 /* Integrated Chat Input Bar */

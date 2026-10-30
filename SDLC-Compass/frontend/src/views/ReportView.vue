@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import * as api from '@/api'
 import type { DiagnosticReport, RecommendationPriority } from '@/types/diagnostic'
+import type { BackendConversationMessage } from '@/api/types'
 import { mockDiagnosticReport } from '@/mocks'
 
 const router = useRouter()
@@ -14,23 +15,6 @@ const isExporting = ref<boolean>(false)
 const isMock = computed(() => store.isMock)
 const reportNotReady = ref<boolean>(false)
 
-// Chat Tab Keys
-type TabKey = 'supervisor' | 'requirements' | 'code' | 'testing' | 'devops'
-
-interface ChatTab {
-  id: TabKey
-  label: string
-}
-
-const tabs: ChatTab[] = [
-  { id: 'supervisor', label: 'Supervisor' },
-  { id: 'requirements', label: 'Requirements & Design' },
-  { id: 'code', label: 'Code & Refactoring' },
-  { id: 'testing', label: 'QA & Testing' },
-  { id: 'devops', label: 'DevOps & Monitoring' }
-]
-
-const activeTab = ref<TabKey>('supervisor')
 const composerInput = ref<string>('')
 const isSending = ref<boolean>(false)
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -44,7 +28,6 @@ interface ProposedChange {
 
 interface DisplayChatMessage {
   id: string
-  tabId: TabKey
   senderType: 'user' | 'specialist' | 'proposal' | 'synthesizer'
   senderName: string
   avatarInitial?: string
@@ -54,11 +37,12 @@ interface DisplayChatMessage {
   proposal?: ProposedChange
 }
 
-const chatMessages = ref<DisplayChatMessage[]>([
+// Sample advisory thread, shown only in mock mode. A real session starts
+// empty and loads its history from the backend.
+const MOCK_ADVISORY_MESSAGES: DisplayChatMessage[] = [
   // Supervisor tab thread matching design image
   {
     id: 'msg-sup-1',
-    tabId: 'supervisor',
     senderType: 'user',
     senderName: 'Team representative',
     avatarInitial: 'TL',
@@ -68,7 +52,6 @@ const chatMessages = ref<DisplayChatMessage[]>([
   },
   {
     id: 'msg-sup-2',
-    tabId: 'supervisor',
     senderType: 'proposal',
     senderName: 'Synthesizer',
     timestamp: '09:44',
@@ -82,7 +65,6 @@ const chatMessages = ref<DisplayChatMessage[]>([
   },
   {
     id: 'msg-sup-3',
-    tabId: 'supervisor',
     senderType: 'synthesizer',
     senderName: 'Synthesizer',
     avatarInitial: 'Y',
@@ -94,7 +76,6 @@ const chatMessages = ref<DisplayChatMessage[]>([
   // Requirements tab thread
   {
     id: 'msg-req-1',
-    tabId: 'requirements',
     senderType: 'specialist',
     senderName: 'Requirements & Design',
     avatarInitial: 'R',
@@ -104,7 +85,6 @@ const chatMessages = ref<DisplayChatMessage[]>([
   },
   {
     id: 'msg-req-2',
-    tabId: 'requirements',
     senderType: 'user',
     senderName: 'Team representative',
     avatarInitial: 'TL',
@@ -116,7 +96,6 @@ const chatMessages = ref<DisplayChatMessage[]>([
   // Code & Refactoring tab thread
   {
     id: 'msg-code-1',
-    tabId: 'code',
     senderType: 'specialist',
     senderName: 'Code & Refactoring',
     avatarInitial: 'C',
@@ -126,7 +105,6 @@ const chatMessages = ref<DisplayChatMessage[]>([
   },
   {
     id: 'msg-code-2',
-    tabId: 'code',
     senderType: 'user',
     senderName: 'Team representative',
     avatarInitial: 'TL',
@@ -138,7 +116,6 @@ const chatMessages = ref<DisplayChatMessage[]>([
   // QA & Testing tab thread
   {
     id: 'msg-qa-1',
-    tabId: 'testing',
     senderType: 'specialist',
     senderName: 'QA & Testing',
     avatarInitial: 'Q',
@@ -150,7 +127,6 @@ const chatMessages = ref<DisplayChatMessage[]>([
   // DevOps & Monitoring tab thread
   {
     id: 'msg-dev-1',
-    tabId: 'devops',
     senderType: 'specialist',
     senderName: 'DevOps & Monitoring',
     avatarInitial: 'D',
@@ -158,11 +134,30 @@ const chatMessages = ref<DisplayChatMessage[]>([
     text: 'Repository has Dockerfile and build.yml without detected deploy step. Turning the manual checklist into a repeatable delivery gate is recommended.',
     timestamp: '09:46'
   }
-])
+]
 
-const currentTabMessages = computed(() => {
-  return chatMessages.value.filter((m) => m.tabId === activeTab.value)
-})
+const chatMessages = ref<DisplayChatMessage[]>(api.USE_MOCKS ? MOCK_ADVISORY_MESSAGES : [])
+
+function formatTime(iso?: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function toDisplayMessage(m: BackendConversationMessage): DisplayChatMessage {
+  if (m.role === 'user') {
+    return { id: m.id, senderType: 'user', senderName: 'You', avatarInitial: 'You', text: m.content, timestamp: formatTime(m.timestamp) }
+  }
+  const name = m.agent_label || 'Advisor'
+  return {
+    id: m.id,
+    senderType: 'specialist',
+    senderName: name,
+    avatarInitial: name.charAt(0).toUpperCase(),
+    text: m.content,
+    timestamp: formatTime(m.timestamp)
+  }
+}
 
 function scrollToBottom() {
   nextTick(() => {
@@ -170,11 +165,6 @@ function scrollToBottom() {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
     }
   })
-}
-
-function selectTab(tabKey: TabKey) {
-  activeTab.value = tabKey
-  scrollToBottom()
 }
 
 // Composer & Send logic
@@ -190,11 +180,9 @@ async function handleSendMessage() {
   // Optimistic push
   chatMessages.value.push({
     id: `msg-user-${Date.now()}`,
-    tabId: activeTab.value,
     senderType: 'user',
-    senderName: 'Team representative',
-    avatarInitial: 'TL',
-    roleBadge: 'Question',
+    senderName: 'You',
+    avatarInitial: 'You',
     text: content,
     timestamp: now
   })
@@ -204,25 +192,11 @@ async function handleSendMessage() {
     if (!api.USE_MOCKS && store.sessionId) {
       const res = await api.backendClient.sendAdvisorMessage(store.sessionId, content)
       const reply = res.messages.find((m) => m.role !== 'user')
-      if (reply) {
-        chatMessages.value.push({
-          id: reply.id,
-          tabId: activeTab.value,
-          senderType: 'specialist',
-          senderName: reply.agent_label || 'Specialist',
-          avatarInitial: (reply.agent_label || 'S').charAt(0).toUpperCase(),
-          roleBadge: 'Response',
-          text: reply.content,
-          timestamp: reply.timestamp
-            ? new Date(reply.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            : now
-        })
-      }
+      if (reply) chatMessages.value.push(toDisplayMessage(reply))
     } else {
       const reply = await api.sendAdvisorMessage(content)
       chatMessages.value.push({
         id: reply.id,
-        tabId: activeTab.value,
         senderType: 'specialist',
         senderName: reply.senderName || 'Synthesizer',
         avatarInitial: 'Y',
@@ -248,75 +222,57 @@ function handleKeyDown(e: KeyboardEvent) {
 
 // Report Lifecycle
 onMounted(async () => {
-  store.ensureSampleSignals()
   store.setStep(4)
 
-  if (!isMock.value && store.sessionId) {
+  if (api.USE_MOCKS) {
+    store.ensureSampleSignals()
     if (!store.diagnostic) {
-      try {
-        store.diagnostic = await api.getExistingDiagnostic(store.sessionId)
-      } catch (err) {
-        console.warn('No report available yet for this session:', err)
-        reportNotReady.value = true
-      }
+      store.diagnostic = JSON.parse(JSON.stringify(mockDiagnosticReport))
     }
+    scrollToBottom()
     return
   }
 
-  if (!store.diagnostic) {
-    store.diagnostic = JSON.parse(JSON.stringify(mockDiagnosticReport))
+  if (!store.sessionId) {
+    reportNotReady.value = true
+    return
   }
-
+  await store.ensureSampleSignals()
+  if (!store.diagnostic) {
+    try {
+      store.diagnostic = await api.getExistingDiagnostic(store.sessionId)
+    } catch (err) {
+      console.warn('No report available yet for this session:', err)
+      reportNotReady.value = true
+      return
+    }
+  }
+  try {
+    const history = await api.backendClient.getAdvisorMessages(store.sessionId)
+    chatMessages.value = history.messages.map(toDisplayMessage)
+  } catch (err) {
+    console.warn('Could not load advisory chat history:', err)
+  }
   scrollToBottom()
 })
 
-const report = computed<DiagnosticReport>(() => {
-  return store.diagnostic || mockDiagnosticReport
-})
+const report = computed<DiagnosticReport | null>(() => store.diagnostic)
 
-// Right Column: Atlas Service Context Card Info
-const contextSubtitle = computed(() => {
-  if (isMock.value) {
-    return '48 code files · FastAPI + React · 6 test files / 42 source files'
+// Right column context card: scanner facts only. A row without a real
+// value is left out rather than filled with a placeholder.
+const contextKeyValues = computed(() => {
+  const sig = store.repoSignals
+  if (!sig) return []
+  const rows: { key: string; value: string }[] = []
+  if (sig.totalSupportedFiles) rows.push({ key: 'Code files', value: String(sig.totalSupportedFiles) })
+  if (sig.languages?.[0]?.name) rows.push({ key: 'Primary language', value: sig.languages[0].name })
+  if (sig.stack?.frameworks?.length) rows.push({ key: 'Frameworks', value: sig.stack.frameworks.join(', ') })
+  if (sig.quality?.sourceFilesCount) {
+    rows.push({ key: 'Test files', value: `${sig.quality.testFilesCount} of ${sig.quality.sourceFilesCount} source files` })
   }
-  const signals = store.repoSignals
-  if (signals) {
-    const fw = signals.stack.frameworks.slice(0, 2).join(' + ') || 'Analyzed'
-    return `${signals.totalSupportedFiles} code files · ${fw} · ${signals.quality.testFilesCount} test files / ${signals.quality.sourceFilesCount} source files`
-  }
-  return report.value.projectProfile.codeFilesSummary || 'Repository evidence analyzed'
+  if (sig.cicd?.ciProvider) rows.push({ key: 'CI', value: sig.cicd.ciProvider })
+  return rows
 })
-
-const contextKeyValues = computed(() => [
-  {
-    key: 'Repository',
-    value: isMock.value
-      ? 'Reviewed · 6 signal groups'
-      : (store.repoSignals ? 'Reviewed · Signal groups active' : 'Reviewed · 6 signal groups')
-  },
-  {
-    key: 'Scope',
-    value: isMock.value
-      ? '48 code files · PoC eligible'
-      : `${store.repoSignals?.totalSupportedFiles || 48} code files · ${store.repoSignals?.isEligiblePoC ? 'PoC eligible' : 'Under review'}`
-  },
-  {
-    key: 'Team',
-    value: isMock.value ? 'Scrum · 8 members' : (store.answers['methodology']?.answerText || 'Scrum · 8 members')
-  },
-  {
-    key: 'AI starting point',
-    value: isMock.value ? 'Exploratory' : (store.answers['ai-maturity']?.answerText || 'Exploratory')
-  },
-  {
-    key: 'Pain points',
-    value: isMock.value ? '7 selected' : (store.answers['pain-points']?.answerText ? 'Declared' : '7 selected')
-  },
-  {
-    key: 'Current tools',
-    value: isMock.value ? 'Copilot pilot · ChatGPT' : (store.answers['tools-used']?.answerText || 'Copilot pilot · ChatGPT')
-  }
-])
 
 // Section 4: Accordion Rows (Requirements, Testing, Deployment, Design, Development, Monitoring)
 export interface AccordionRecItem {
@@ -351,49 +307,51 @@ const accordionRecommendations = computed<AccordionRecItem[]>(() => {
     { key: 'monitoring', name: 'Monitoring', defaultPriority: 'low' as RecommendationPriority, defaultQuickWin: false }
   ]
 
-  return desiredOrder.map((spec) => {
+  const items: AccordionRecItem[] = []
+  for (const spec of desiredOrder) {
+    const phases = report.value?.phases ?? {}
     // 1. Try finding in report.phases with exact key or backend composite key
     let foundRec: any = null
-    const sec = report.value.phases[spec.key]
+    const sec = phases[spec.key]
     if (sec && sec.recommendations && sec.recommendations.length > 0) {
       foundRec = sec.recommendations[0]
     } else {
       // Check composite keys in backend mode
-      if (spec.key === 'requirements' && report.value.phases['requirements_design']?.recommendations?.[0]) {
-        foundRec = report.value.phases['requirements_design'].recommendations[0]
-      } else if (spec.key === 'design' && report.value.phases['requirements_design']?.recommendations?.[1]) {
-        foundRec = report.value.phases['requirements_design'].recommendations[1]
-      } else if (spec.key === 'development' && report.value.phases['code_refactoring']?.recommendations?.[0]) {
-        foundRec = report.value.phases['code_refactoring'].recommendations[0]
-      } else if (spec.key === 'testing' && report.value.phases['qa_testing']?.recommendations?.[0]) {
-        foundRec = report.value.phases['qa_testing'].recommendations[0]
-      } else if (spec.key === 'deployment' && report.value.phases['devops_monitoring']?.recommendations?.[0]) {
-        foundRec = report.value.phases['devops_monitoring'].recommendations[0]
-      } else if (spec.key === 'monitoring' && report.value.phases['devops_monitoring']?.recommendations?.[1]) {
-        foundRec = report.value.phases['devops_monitoring'].recommendations[1]
+      if (spec.key === 'requirements' && phases['requirements_design']?.recommendations?.[0]) {
+        foundRec = phases['requirements_design'].recommendations[0]
+      } else if (spec.key === 'design' && phases['requirements_design']?.recommendations?.[1]) {
+        foundRec = phases['requirements_design'].recommendations[1]
+      } else if (spec.key === 'development' && phases['code_refactoring']?.recommendations?.[0]) {
+        foundRec = phases['code_refactoring'].recommendations[0]
+      } else if (spec.key === 'testing' && phases['qa_testing']?.recommendations?.[0]) {
+        foundRec = phases['qa_testing'].recommendations[0]
+      } else if (spec.key === 'deployment' && phases['devops_monitoring']?.recommendations?.[0]) {
+        foundRec = phases['devops_monitoring'].recommendations[0]
+      } else if (spec.key === 'monitoring' && phases['devops_monitoring']?.recommendations?.[1]) {
+        foundRec = phases['devops_monitoring'].recommendations[1]
       }
     }
 
-    // Default mock data copy for each phase
-    const mockPhaseSec = mockDiagnosticReport.phases[spec.key]
-    const mockRec = mockPhaseSec?.recommendations?.[0]
-
-    return {
-      id: foundRec?.id || mockRec?.id || `rec-${spec.key}`,
+    // Only what the report actually contains: a phase without a real
+    // recommendation is left out, not filled in from the sample report.
+    if (!foundRec) continue
+    items.push({
+      id: foundRec.id || `rec-${spec.key}`,
       phaseKey: spec.key,
       phaseName: spec.name,
-      priority: foundRec?.priority || mockRec?.priority || spec.defaultPriority,
-      title: foundRec?.title || mockRec?.title || `Establish ${spec.name} practices`,
-      quickWin: foundRec?.quickWin ?? mockRec?.quickWin ?? spec.defaultQuickWin,
-      actionText: foundRec?.actionText || mockRec?.actionText || foundRec?.justification || mockRec?.justification,
-      repositoryEvidence: foundRec?.repositoryEvidence || mockRec?.repositoryEvidence,
-      teamInput: foundRec?.teamInput || mockRec?.teamInput,
-      justification: foundRec?.justification || mockRec?.justification,
-      examplePractice: foundRec?.examplePractice || mockRec?.examplePractice,
-      expectedImpact: foundRec?.expectedImpact || mockRec?.expectedImpact,
-      effort: foundRec?.effort || mockRec?.effort
-    }
-  })
+      priority: foundRec.priority || spec.defaultPriority,
+      title: foundRec.title,
+      quickWin: foundRec.quickWin ?? false,
+      actionText: foundRec.actionText || foundRec.justification,
+      repositoryEvidence: foundRec.repositoryEvidence,
+      teamInput: foundRec.teamInput,
+      justification: foundRec.justification,
+      examplePractice: foundRec.examplePractice,
+      expectedImpact: foundRec.expectedImpact,
+      effort: foundRec.effort
+    })
+  }
+  return items
 })
 
 function getPriorityBadgeClass(priority: string): string {
@@ -474,12 +432,6 @@ function goBackToQuestions() {
         </p>
       </div>
 
-      <div class="header-specialists-block">
-        <span class="badge badge-purple">4 active specialists</span>
-        <p class="header-specialists-sub">
-          Supervisor coordinates the advisory chat · Synthesizer prioritises the report
-        </p>
-      </div>
     </header>
 
     <!-- Export Toast Notice -->
@@ -501,25 +453,8 @@ function goBackToQuestions() {
         <div class="chat-card-header">
           <div>
             <h2 class="chat-title">Advisory chat</h2>
-            <p class="chat-subtitle">Supervisor coordinates questions from Requirements, Code, QA and DevOps.</p>
+            <p class="chat-subtitle">Ask follow-up questions about the report or challenge a recommendation.</p>
           </div>
-          <span class="badge badge-purple">4 active specialists</span>
-        </div>
-
-        <!-- Specialist Navigation Tabs -->
-        <div class="chat-tabs-bar" role="tablist" aria-label="Advisory chat tabs">
-          <button
-            v-for="tab in tabs"
-            :key="tab.id"
-            type="button"
-            role="tab"
-            :aria-selected="activeTab === tab.id"
-            class="chat-tab-btn"
-            :class="{ 'tab-active': activeTab === tab.id }"
-            @click="selectTab(tab.id)"
-          >
-            {{ tab.label }}
-          </button>
         </div>
 
         <!-- Messages Stream (Fixed height 380px, internal scroll, anchored to bottom) -->
@@ -529,7 +464,8 @@ function goBackToQuestions() {
           aria-label="Conversation messages"
         >
           <div class="messages-inner-anchor">
-            <template v-for="msg in currentTabMessages" :key="msg.id">
+            <p v-if="!chatMessages.length" class="empty-chat-note">No messages yet. Ask the advisor about any part of the report.</p>
+            <template v-for="msg in chatMessages" :key="msg.id">
               <!-- Case A: Proposed Change Card -->
               <div v-if="msg.senderType === 'proposal' && msg.proposal" class="proposal-card-block">
                 <div class="proposal-card-header">
@@ -597,7 +533,6 @@ function goBackToQuestions() {
         <div class="chat-composer-section">
           <div class="composer-header-row">
             <span class="composer-title">Message composer</span>
-            <span class="draft-indicator">Draft saved automatically</span>
           </div>
 
           <div class="composer-input-row">
@@ -634,12 +569,10 @@ function goBackToQuestions() {
         <div class="card context-card">
           <div class="context-card-header">
             <h3 class="context-title">{{ report.repoName }}</h3>
-            <p class="context-sub">
-              <template v-if="isMock">Sample data · </template>{{ contextSubtitle }}
-            </p>
+            <p v-if="isMock" class="context-sub">Sample data</p>
           </div>
 
-          <div class="context-attributes-table">
+          <div v-if="contextKeyValues.length" class="context-attributes-table">
             <div v-for="item in contextKeyValues" :key="item.key" class="context-attr-row">
               <span class="context-attr-key">{{ item.key }}</span>
               <span class="context-attr-val">{{ item.value }}</span>
@@ -656,19 +589,19 @@ function goBackToQuestions() {
           <p class="exec-paragraph">{{ report.executiveSummary }}</p>
 
           <!-- Recommended starting point stat box -->
-          <div class="recommended-start-box">
+          <div v-if="report.metrics" class="recommended-start-box">
             <span class="rec-start-title">RECOMMENDED STARTING POINT</span>
             <div class="rec-stats-list">
               <div class="rec-stat-item">
-                <span class="rec-stat-number">{{ report.metrics?.highPriorityCount ?? 3 }}</span>
+                <span class="rec-stat-number">{{ report.metrics.highPriorityCount }}</span>
                 <span class="rec-stat-label">High-priority phases</span>
               </div>
               <div class="rec-stat-item">
-                <span class="rec-stat-number stat-green">{{ report.metrics?.quickWinsCount ?? 2 }}</span>
+                <span class="rec-stat-number stat-green">{{ report.metrics.quickWinsCount }}</span>
                 <span class="rec-stat-label">Quick wins to pilot</span>
               </div>
               <div class="rec-stat-item">
-                <span class="rec-stat-number">{{ report.metrics?.phasesCoveredCount ?? 6 }}</span>
+                <span class="rec-stat-number">{{ report.metrics.phasesCoveredCount }}</span>
                 <span class="rec-stat-label">SDLC phases covered</span>
               </div>
             </div>
@@ -678,7 +611,7 @@ function goBackToQuestions() {
     </div>
 
     <!-- 3. Full-width Amber Banner -->
-    <div class="card evidence-gap-banner" role="region" aria-label="Evidence gaps alert">
+    <div v-if="report.evidenceGapAlert" class="card evidence-gap-banner" role="region" aria-label="Evidence gaps alert">
       <div class="banner-icon-circle" aria-hidden="true">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path
@@ -690,10 +623,10 @@ function goBackToQuestions() {
       </div>
       <div class="banner-text-block">
         <strong class="banner-headline">
-          {{ report.evidenceGapAlert?.title || 'Resolve evidence gaps before acting' }}
+          {{ report.evidenceGapAlert.title }}
         </strong>
         <p class="banner-body">
-          {{ report.evidenceGapAlert?.description || 'The team expects CI tests, but build.yml contains no detected test job. Monitoring is self-declared as external, while repository telemetry signals are missing. Validate both boundaries; absence of evidence is not evidence of absence.' }}
+          {{ report.evidenceGapAlert.description }}
         </p>
       </div>
     </div>
@@ -868,7 +801,7 @@ function goBackToQuestions() {
               </p>
             </div>
 
-            <div class="about-subgroup">
+            <div v-if="report.scopeAndLimitations?.enterpriseRoadmap?.length" class="about-subgroup">
               <span class="block-label-bold">Enterprise roadmap · Future scope, not available today</span>
               <ul class="about-bullet-list">
                 <li
@@ -887,7 +820,7 @@ function goBackToQuestions() {
           <div class="about-right-col">
             <h3 class="about-section-heading">A review-ready PDF structure</h3>
             <p class="about-sub-desc">
-              Designed output for stakeholder review, carrying sample data and report version.
+              Designed output for stakeholder review, carrying the report version.
             </p>
 
             <ul class="pdf-checklist">
@@ -958,12 +891,19 @@ function goBackToQuestions() {
     <!-- Bottom Disclaimer Row -->
     <div class="bottom-disclaimer-row">
       <span>Independent concept · Not affiliated with or endorsed by Accenture</span>
-      <span>Static preview · Human review required</span>
+      <span>Human review required</span>
     </div>
   </div>
 </template>
 
 <style scoped>
+.empty-chat-note {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: 1rem 0;
+}
+
 .report-view {
   padding-top: 1.5rem;
   padding-bottom: 4rem;

@@ -3,9 +3,12 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import StepBar from '@/components/layout/StepBar.vue'
 import LoadingOverlay from '@/components/common/LoadingOverlay.vue'
 import ErrorState from '@/components/common/ErrorState.vue'
+import ToastStack from '@/components/notifications/ToastStack.vue'
 import { useSessionStore } from '@/stores/session'
+import { useNotificationsStore } from '@/stores/notifications'
 
 const store = useSessionStore()
+useNotificationsStore().startPolling()
 </script>
 
 <template>
@@ -34,7 +37,10 @@ const store = useSessionStore()
     <LoadingOverlay
       v-if="store.isLoading"
       :message="store.loadingMessage"
+      @background="store.sendToBackground()"
     />
+
+    <ToastStack />
 
     <!-- Global Subdued Footer -->
     <footer class="app-footer">

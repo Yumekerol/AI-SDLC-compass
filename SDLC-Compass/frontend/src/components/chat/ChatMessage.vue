@@ -50,19 +50,19 @@ defineProps<{
 .message-row {
   display: flex;
   align-items: flex-start;
-  gap: 0.875rem;
-  margin-bottom: 0.75rem;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
   animation: fadeIn 0.2s ease-out;
 }
 
 .avatar {
-  width: 36px;
-  height: 36px;
+  width: 26px;
+  height: 26px;
   border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.8125rem;
+  font-size: 0.625rem;
   font-weight: 700;
   flex-shrink: 0;
   margin-top: 2px;
@@ -87,28 +87,28 @@ defineProps<{
 
 .bubble-container {
   flex: 1;
-  max-width: 95%;
+  max-width: 85%;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.125rem;
 }
 
 .bubble-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.8125rem;
-  padding-left: 0.25rem;
+  font-size: 0.75rem;
+  padding: 0 0.25rem;
 }
 
 .sender-name {
   font-weight: 600;
   color: var(--color-text-primary);
-  font-size: 0.875rem;
+  font-size: 0.75rem;
 }
 
 .meta-subtitle {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   color: var(--color-text-muted);
   font-weight: 400;
 }
@@ -123,17 +123,25 @@ defineProps<{
 }
 
 .bubble-body {
-  padding: 0.875rem 1.125rem;
-  border-radius: var(--radius-lg);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background-color: var(--color-surface);
-  box-shadow: var(--shadow-sm);
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .message-user .bubble-body {
   background-color: #faf5ff;
-  border: 1.5px solid #c084fc;
+  border: 1px solid #d8b4fe;
+}
+
+/* The user's own messages sit on the right, like any chat. */
+.message-user {
+  flex-direction: row-reverse;
+}
+
+.message-user .bubble-container {
+  align-items: flex-end;
 }
 
 .body-skipped {
@@ -142,7 +150,7 @@ defineProps<{
 }
 
 .bubble-text {
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   color: var(--color-text-primary);
   white-space: pre-line;
 }

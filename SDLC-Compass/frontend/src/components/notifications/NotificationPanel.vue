@@ -49,7 +49,8 @@ function handleDismissClick(item: AppNotification, event: MouseEvent) {
 function getActionLabel(item: AppNotification): string {
   if (item.action_label) return item.action_label
   if (item.type === 'report_ready') return 'See report →'
-  if (item.type === 'specialist_question') return 'See context →'
+  if (item.type === 'specialist_question') return 'Answer →'
+  if (item.type === 'agents_failed') return 'Open conversation →'
   if (item.type === 'scan_failed') return 'See evidence →'
   if (item.type === 'scan_complete') return 'Review signals →'
   return 'View details →'

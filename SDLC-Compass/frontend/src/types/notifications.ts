@@ -3,6 +3,7 @@ export type NotificationType =
   | 'scan_failed'
   | 'specialist_question'
   | 'report_ready'
+  | 'agents_failed'
   | string
 
 export type NotificationLevel = 'info' | 'success' | 'warning' | 'error'

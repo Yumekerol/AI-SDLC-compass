@@ -49,10 +49,6 @@ onBeforeUnmount(() => {
       <!-- Right: Delivery workspace, Team profile avatar & Notifications -->
       <div class="workspace-profile">
         <span class="workspace-label">Delivery workspace</span>
-        <div class="user-pill" title="Current session user">
-          <div class="avatar-circle">TL</div>
-          <span class="user-name">Team representative</span>
-        </div>
 
         <!-- Notifications Bell & Dropdown -->
         <div ref="notifWrapperRef" class="notifications-wrapper">

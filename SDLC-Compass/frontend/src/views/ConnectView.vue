@@ -2,13 +2,17 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
+import { USE_MOCKS } from '@/api'
 
 const router = useRouter()
 const store = useSessionStore()
 
+const SAMPLE_REPO_URL = 'https://github.com/sample/atlas-service.git'
+
 // State
 const activeTab = ref<'git' | 'zip'>('git')
-const gitUrl = ref<string>('https://github.com/sample/atlas-service.git')
+// The sample repo only exists in mock mode; a real scan starts empty.
+const gitUrl = ref<string>(USE_MOCKS ? SAMPLE_REPO_URL : '')
 const selectedFile = ref<File | null>(null)
 const isDragging = ref<boolean>(false)
 const validationError = ref<string>('')
@@ -62,7 +66,7 @@ function triggerFileInput() {
 // Quick sample fill
 function fillSampleRepo() {
   activeTab.value = 'git'
-  gitUrl.value = 'https://github.com/sample/atlas-service.git'
+  gitUrl.value = SAMPLE_REPO_URL
   validationError.value = ''
 }
 
@@ -91,8 +95,9 @@ async function handleScan() {
     })
   }
 
-  // Navigate to step 2 on success
-  if (store.isConnected && !store.error) {
+  // Navigate to step 2 on success — unless the user sent the scan to the
+  // background; then the "Scan complete" notification takes them there.
+  if (store.isConnected && !store.error && !store.backgrounded) {
     router.push('/signals')
   }
 }
@@ -102,7 +107,7 @@ async function handleScan() {
   <div class="connect-view container">
     <!-- Top Step Subtitle Header -->
     <div class="screen-meta">
-      <span class="step-badge">TEAM DIAGNOSTIC / STEP 1 OF 5</span>
+      <span class="step-badge">TEAM DIAGNOSTIC / STEP 1 OF 4</span>
       <h1 class="page-title">Start with your repository</h1>
       <p class="page-subtitle">
         Connect a codebase to build an evidence-led view of your software delivery lifecycle.
@@ -191,7 +196,7 @@ async function handleScan() {
 
             <div id="git-help-text" class="input-help-row">
               <span class="help-text">Public GitHub, GitLab, or Bitbucket repository URL.</span>
-              <button type="button" class="sample-link-btn" @click="fillSampleRepo">
+              <button v-if="USE_MOCKS" type="button" class="sample-link-btn" @click="fillSampleRepo">
                 Use sample repo (Atlas Service)
               </button>
             </div>

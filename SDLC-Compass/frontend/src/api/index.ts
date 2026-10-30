@@ -49,12 +49,16 @@ let currentNotifications: AppNotification[] = JSON.parse(JSON.stringify(mockNoti
  */
 export async function scanRepository(
   payload: ConnectPayload,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  // Called as soon as the backend session exists — before the (possibly
+  // long) scan — so notifications for it can be followed while it runs.
+  onSessionCreated?: (sessionId: string) => void
 ): Promise<RepoSignals> {
   if (!USE_MOCKS) {
     onProgress?.('Creating diagnostic session on backend...')
     const sessionRes = await backendClient.createSession(payload)
     const sessionId = sessionRes.session_id
+    onSessionCreated?.(sessionId)
 
     if (payload.source === 'zip' && payload.file) {
       onProgress?.('Uploading ZIP repository archive...')
@@ -111,6 +115,9 @@ export async function scanRepository(
  * Get current repository signals
  */
 export async function getSignals(sessionId?: string): Promise<RepoSignals> {
+  if (!USE_MOCKS && !sessionId) {
+    throw new Error('No active session — connect a repository first.')
+  }
   if (!USE_MOCKS && sessionId) {
     const rawSignals = await backendClient.getSignals(sessionId)
     currentSignals = adaptBackendSignalsToRepoSignals(rawSignals)
@@ -124,6 +131,9 @@ export async function getSignals(sessionId?: string): Promise<RepoSignals> {
  * Update modified repository signals
  */
 export async function updateSignals(updated: RepoSignals, sessionId?: string): Promise<RepoSignals> {
+  if (!USE_MOCKS && !(sessionId || updated.sessionId)) {
+    throw new Error('No active session — connect a repository first.')
+  }
   if (!USE_MOCKS && (sessionId || updated.sessionId)) {
     const targetSessionId = sessionId || updated.sessionId!
     const patchPayload = adaptRepoSignalsToPatchRequest(updated)
@@ -188,6 +198,10 @@ export async function generateDiagnostic(
   sessionId?: string,
   onProgress?: (message: string) => void
 ): Promise<DiagnosticReport> {
+  if (!USE_MOCKS && !(sessionId || signals.sessionId)) {
+    // Never fall through to the sample report in real mode.
+    throw new Error('No active session — connect a repository first.')
+  }
   if (!USE_MOCKS && (sessionId || signals.sessionId)) {
     const targetSessionId = sessionId || signals.sessionId!
     onProgress?.('Synthesizing evidence across all 4 specialist domains...')
@@ -335,7 +349,9 @@ export async function fetchNotifications(
   sessionId?: string,
   unreadOnly = false
 ): Promise<AppNotification[]> {
-  if (!USE_MOCKS && sessionId) {
+  if (!USE_MOCKS) {
+    // No session yet means no notifications yet — never sample ones.
+    if (!sessionId) return []
     const res = await backendClient.getNotifications(sessionId, unreadOnly)
     return res.notifications
   }
@@ -353,8 +369,8 @@ export async function markNotificationAsRead(
   notificationId: string,
   sessionId?: string
 ): Promise<void> {
-  if (!USE_MOCKS && sessionId) {
-    await backendClient.markNotificationRead(sessionId, notificationId)
+  if (!USE_MOCKS) {
+    if (sessionId) await backendClient.markNotificationRead(sessionId, notificationId)
     return
   }
   await delay(100)
@@ -370,8 +386,8 @@ export async function markNotificationAsRead(
 export async function markAllNotificationsAsRead(
   sessionId?: string
 ): Promise<void> {
-  if (!USE_MOCKS && sessionId) {
-    await backendClient.markAllNotificationsRead(sessionId)
+  if (!USE_MOCKS) {
+    if (sessionId) await backendClient.markAllNotificationsRead(sessionId)
     return
   }
   await delay(100)
@@ -386,8 +402,8 @@ export async function markAllNotificationsAsRead(
 export async function clearAllNotifications(
   sessionId?: string
 ): Promise<void> {
-  if (!USE_MOCKS && sessionId) {
-    await backendClient.clearAllNotifications(sessionId)
+  if (!USE_MOCKS) {
+    if (sessionId) await backendClient.clearAllNotifications(sessionId)
     return
   }
   await delay(100)
@@ -401,8 +417,8 @@ export async function deleteNotification(
   notificationId: string,
   sessionId?: string
 ): Promise<void> {
-  if (!USE_MOCKS && sessionId) {
-    await backendClient.deleteNotification(sessionId, notificationId)
+  if (!USE_MOCKS) {
+    if (sessionId) await backendClient.deleteNotification(sessionId, notificationId)
     return
   }
   await delay(100)

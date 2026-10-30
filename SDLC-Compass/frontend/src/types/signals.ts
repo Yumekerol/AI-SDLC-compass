@@ -65,4 +65,6 @@ export interface RepoSignals {
   warnings: WarningSignal[]
   /** True when data comes from the in-memory mock fixture rather than a real scan */
   fromMock?: boolean
+  /** Scanner-reported confidence per signal group (real scans only). */
+  groupConfidence?: Partial<Record<'languages' | 'size' | 'stack' | 'cicd' | 'quality' | 'warnings', string>>
 }

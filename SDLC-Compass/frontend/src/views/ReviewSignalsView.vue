@@ -23,6 +23,14 @@ const signals = computed<RepoSignals>(() => {
 const isMock = computed(() => store.isMock)
 const evidenceLabel = computed(() => isMock.value ? 'SAMPLE EVIDENCE' : 'EVIDENCE')
 
+type GroupKey = keyof NonNullable<RepoSignals['groupConfidence']>
+
+/** The scanner's confidence for a signal group. The descriptive sample label
+ *  is only used in mock mode; a real scan never shows a made-up confidence. */
+function confidenceBadge(group: GroupKey, sampleLabel: string): string {
+  return signals.value.groupConfidence?.[group] ?? (isMock.value ? sampleLabel : '')
+}
+
 // Modal actions
 function openEdit(category: EditableSignalCategory) {
   activeEditCategory.value = category
@@ -56,7 +64,7 @@ async function handleContinue() {
   <div v-if="signals" class="review-view container">
     <!-- Top Step Meta Header -->
     <div class="screen-meta">
-      <span class="step-badge">TEAM DIAGNOSTIC / STEP 2 OF 5</span>
+      <span class="step-badge">TEAM DIAGNOSTIC / STEP 2 OF 4</span>
       <h1 class="page-title">Review the evidence, not assumptions</h1>
       <p class="page-subtitle">
         Confirm the extracted signals. Each card can be corrected before it informs your diagnostic.
@@ -124,7 +132,7 @@ async function handleContinue() {
       <!-- 1. Languages Card -->
       <SignalCard
         title="Languages"
-        badge-text="High confidence · File extensions"
+        :badge-text="confidenceBadge('languages', 'High confidence · File extensions')"
         badge-class="badge-purple"
         :sample-evidence="signals.languages.map((l) => `*.${l.name.toLowerCase().slice(0, 2)}`).join(' · ')"
         :evidence-label="evidenceLabel"
@@ -160,14 +168,14 @@ async function handleContinue() {
         </div>
 
         <template #footnote>
-          No Java detected. Manifests and config files support evidence but are not counted as code files.
+          Manifests and config files support evidence but are not counted as code files.
         </template>
       </SignalCard>
 
       <!-- 2. Size & Structure Card -->
       <SignalCard
         title="Size & structure"
-        badge-text="Mixed confidence · Counts + estimates"
+        :badge-text="confidenceBadge('size', 'Mixed confidence · Counts + estimates')"
         badge-class="badge-info"
         :sample-evidence="signals.size.evidenceSummary"
         :evidence-label="evidenceLabel"
@@ -200,7 +208,7 @@ async function handleContinue() {
 
         <div class="key-value-row">
           <span class="kv-key">Approx. complexity</span>
-          <span class="kv-val">{{ signals.size.approxComplexity }} · Low confidence</span>
+          <span class="kv-val">{{ signals.size.approxComplexity }} · Estimate</span>
         </div>
 
         <template #footnote>
@@ -212,7 +220,7 @@ async function handleContinue() {
       <!-- 3. Stack & Tooling Card -->
       <SignalCard
         title="Stack & tooling"
-        badge-text="High confidence · Dependency manifests"
+        :badge-text="confidenceBadge('stack', 'High confidence · Dependency manifests')"
         badge-class="badge-purple"
         :sample-evidence="signals.stack.sampleEvidence"
         :evidence-label="evidenceLabel"
@@ -251,7 +259,7 @@ async function handleContinue() {
       <!-- 4. CI/CD & Operations Card -->
       <SignalCard
         title="CI/CD & operations"
-        badge-text="Medium confidence · Config inspection"
+        :badge-text="confidenceBadge('cicd', 'Medium confidence · Config inspection')"
         badge-class="badge-info"
         :sample-evidence="signals.cicd.sampleEvidence"
         :evidence-label="evidenceLabel"
@@ -285,14 +293,14 @@ async function handleContinue() {
         </div>
 
         <template #footnote>
-          No test or deployment job detected. Workflow configuration was reviewed; no pipeline was executed.
+          <template v-if="!signals.cicd.hasTestJob && !signals.cicd.hasDeployJob">No test or deployment job detected. </template>Workflow configuration was reviewed; no pipeline was executed.
         </template>
       </SignalCard>
 
       <!-- 5. Quality Indicators Card -->
       <SignalCard
         title="Quality indicators"
-        badge-text="Estimated proxy · Not executed coverage"
+        :badge-text="confidenceBadge('quality', 'Estimated proxy · Not executed coverage')"
         badge-class="badge-purple"
         :sample-evidence="signals.quality.sampleEvidence"
         :evidence-label="evidenceLabel"
@@ -334,9 +342,9 @@ async function handleContinue() {
       <!-- 6. Warnings & Missing Signals Card -->
       <SignalCard
         title="Warnings & missing signals"
-        badge-text="Needs confirmation · Low confidence"
+        :badge-text="confidenceBadge('warnings', 'Needs confirmation · Low confidence')"
         badge-class="badge-warning"
-        :sample-evidence="signals.warnings[0]?.sampleEvidence || '.github/workflows/build.yml'"
+        :sample-evidence="signals.warnings[0]?.sampleEvidence || ''"
         :evidence-label="evidenceLabel"
         @edit="openEdit('warnings')"
       >
@@ -378,7 +386,8 @@ async function handleContinue() {
         <strong class="notice-title">Need to change the scope?</strong>
         <p class="notice-body">
           For unsupported or oversized content, analyse a supported subset, continue with a scope warning, or cancel.
-          This sample is within the PoC scope.
+          <template v-if="isMock">This sample is within the PoC scope.</template>
+          <template v-else>{{ signals.eligibleReason }}</template>
         </p>
       </div>
     </div>

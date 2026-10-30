@@ -25,6 +25,10 @@ export const useSessionStore = defineStore('session', () => {
   // Loading & Error states
   const isLoading = ref<boolean>(false)
   const loadingMessage = ref<string>('')
+  /** The user chose "notify me when it's done" on the loading overlay: the
+   *  running work carries on without the overlay, and a notification (bell +
+   *  toast) tells them when it finishes. */
+  const backgrounded = ref<boolean>(false)
   const error = ref<AppError | null>(null)
   const lastFailedAction = ref<(() => Promise<void>) | null>(null)
 
@@ -58,6 +62,11 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  function sendToBackground() {
+    backgrounded.value = true
+    isLoading.value = false
+  }
+
   async function retryLastAction() {
     if (lastFailedAction.value) {
       clearError()
@@ -70,6 +79,7 @@ export const useSessionStore = defineStore('session', () => {
    * Calls POST /sessions, uploads ZIP if applicable, calls POST /scan, and polls until complete.
    */
   async function connectRepository(payload: ConnectPayload) {
+    backgrounded.value = false
     isLoading.value = true
     loadingMessage.value = 'Connecting and analyzing repository signals...'
     clearError()
@@ -81,7 +91,7 @@ export const useSessionStore = defineStore('session', () => {
 
         const signals = await api.scanRepository(payload, (msg) => {
           loadingMessage.value = msg
-        })
+        }, (id) => setSessionId(id))
 
         repoSignals.value = signals
         if (signals.sessionId) {
@@ -166,6 +176,7 @@ export const useSessionStore = defineStore('session', () => {
    * Calls POST /sessions/{id}/confirm-signals when connected to backend.
    */
   async function confirmSignals() {
+    backgrounded.value = false
     try {
       isLoading.value = true
       loadingMessage.value = 'Confirming repository signals...'
@@ -322,18 +333,38 @@ export const useSessionStore = defineStore('session', () => {
     currentStep.value = step
   }
 
-  // Pre-seed sample signals or reload from backend session if user refreshes page
+  // Reload signals from the backend session after a page refresh. Sample
+  // signals are used only in mock mode — in real mode a failure is shown as
+  // an error, never papered over with sample data.
   async function ensureSampleSignals() {
-    if (!repoSignals.value) {
-      if (sessionId.value && !api.USE_MOCKS) {
-        try {
-          repoSignals.value = await api.getSignals(sessionId.value)
-          return
-        } catch {
-          // If session not found or backend unavailable, fallback to mock signals
-        }
-      }
+    if (repoSignals.value) return
+    if (api.USE_MOCKS) {
       repoSignals.value = JSON.parse(JSON.stringify(mockRepoSignals))
+      return
+    }
+    if (!sessionId.value) {
+      setError({
+        type: 'network',
+        title: 'No active session',
+        message: 'Connect a repository first. There is no scan to show yet.',
+        canRetry: false
+      })
+      return
+    }
+    try {
+      repoSignals.value = await api.getSignals(sessionId.value)
+    } catch (err: unknown) {
+      const anyErr = err as { message?: string }
+      setError(
+        {
+          type: 'network',
+          title: "Couldn't load signals from the scanner",
+          message: anyErr.message || 'The backend did not return this session\'s scan results.',
+          canRetry: true,
+          retryActionName: 'Retry'
+        },
+        () => ensureSampleSignals()
+      )
     }
   }
 
@@ -346,6 +377,7 @@ export const useSessionStore = defineStore('session', () => {
     currentStep,
     isLoading,
     loadingMessage,
+    backgrounded,
     error,
     // Computed
     isConnected,
@@ -355,6 +387,7 @@ export const useSessionStore = defineStore('session', () => {
     isMock,
     // Actions
     setSessionId,
+    sendToBackground,
     connectRepository,
     updateReviewedSignals,
     confirmSignals,

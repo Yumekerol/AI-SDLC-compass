@@ -126,7 +126,9 @@ export async function triggerScan(sessionId: string): Promise<BackendScanTrigger
 export async function pollSessionStatus(
   sessionId: string,
   onProgress?: (message: string) => void,
-  maxWaitMs = 60000
+  // Generous: the scanner reports its own failures (status "error"), so this
+  // only guards against a backend that stopped answering altogether.
+  maxWaitMs = 10 * 60_000
 ): Promise<BackendSessionStatusResponse> {
   const startTime = Date.now()
 
@@ -158,7 +160,7 @@ export async function pollSessionStatus(
     }
   }
 
-  throw new ApiError('Repository scan timed out after 60 seconds.', 'network')
+  throw new ApiError(`Repository scan timed out after ${Math.round(maxWaitMs / 60_000)} minutes.`, 'network')
 }
 
 /**
@@ -197,6 +199,15 @@ export async function confirmSignals(sessionId: string): Promise<{ session_id: s
  */
 export async function startDiagnostic(sessionId: string): Promise<BackendDiagnoseResponse> {
   return request<BackendDiagnoseResponse>(`/sessions/${sessionId}/diagnose`, {
+    method: 'POST'
+  })
+}
+
+/**
+ * Step 3: Stop the running diagnostic. POST /diagnose starts it again.
+ */
+export async function cancelDiagnostic(sessionId: string): Promise<{ session_id: string; status: string }> {
+  return request<{ session_id: string; status: string }>(`/sessions/${sessionId}/cancel-diagnostic`, {
     method: 'POST'
   })
 }

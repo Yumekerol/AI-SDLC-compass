@@ -121,6 +121,18 @@ export function adaptBackendSignalsToRepoSignals(raw: BackendSignalsResponse): R
       sampleEvidence: groups.warnings_and_gaps?.evidence_paths?.[index] || groups.warnings_and_gaps?.evidence_paths?.[0]
     })) || []
 
+  // The scanner's own confidence per signal group, for the step 2 badges.
+  const confidenceLabel = (c?: string) =>
+    !c ? undefined : c.toLowerCase() === 'estimated' ? 'Estimated' : `${capitalize(c)} confidence`
+  const groupConfidence = {
+    languages: confidenceLabel(groups.languages?.confidence),
+    size: confidenceLabel(groups.size_and_structure?.confidence),
+    stack: confidenceLabel(groups.stack_and_tooling?.confidence),
+    cicd: confidenceLabel(groups.cicd_and_operations?.confidence),
+    quality: confidenceLabel(groups.quality_indicators?.confidence),
+    warnings: confidenceLabel(groups.warnings_and_gaps?.confidence)
+  }
+
   const isEligible = raw.scope?.eligible_for_poc ?? true
   const eligibleReason = isEligible
     ? 'Eligible for PoC: Supported files detected within limit'
@@ -128,6 +140,7 @@ export function adaptBackendSignalsToRepoSignals(raw: BackendSignalsResponse): R
 
   return {
     sessionId: raw.session_id,
+    groupConfidence,
     repoName: raw.repository?.name || 'Repository',
     repoUrl: raw.repository?.clone_url || undefined,
     commitHash: raw.repository?.commit_hash || undefined,
@@ -193,6 +206,10 @@ export function adaptRepoSignalsToPatchRequest(signals: RepoSignals): BackendPat
   }
 }
 
+function normalizeDomain(domain: string | undefined): string {
+  return (domain || '').toLowerCase().replace(/[^a-z]/g, '')
+}
+
 function capitalize(text: string): string {
   if (!text) return ''
   return text.charAt(0).toUpperCase() + text.slice(1)
@@ -238,8 +255,10 @@ export function adaptBackendReportToDiagnosticReport(raw: BackendSynthesisOutput
   const quickWinsCount = phase2.length
 
   DOMAIN_DEFS.forEach((dom) => {
-    // Find all recommendations for this domain
-    const domainRecs = allTagged.filter((t) => t.item.domain === dom.key)
+    // Find all recommendations for this domain. The synthesizer writes the
+    // domain as a key ("devops_monitoring") or as its label ("DevOps &
+    // Monitoring"); both normalise to the same letters.
+    const domainRecs = allTagged.filter((t) => normalizeDomain(t.item.domain) === normalizeDomain(dom.key))
 
     const recs: Recommendation[] = domainRecs.map((tr) => {
       const imp = tr.item.impact?.toLowerCase() || 'medium'
@@ -256,29 +275,15 @@ export function adaptBackendReportToDiagnosticReport(raw: BackendSynthesisOutput
         phase: dom.key,
         title: tr.item.title,
         priority,
-        effort: tr.item.effort || '1 sprint',
-        expectedImpact: tr.item.impact ? capitalize(tr.item.impact.replace('_', ' ')) : 'Moderate impact',
+        // Missing fields stay empty (the report view hides them) rather than
+        // being filled with generic text the synthesizer never wrote.
+        effort: tr.item.effort || '',
+        expectedImpact: tr.item.impact ? capitalize(tr.item.impact.replace('_', ' ')) : '',
         justification: tr.item.description,
-        examplePractice: tr.item.ai_relevance || 'Recommended AI-assisted team practice',
+        examplePractice: tr.item.ai_relevance || '',
         quickWin: tr.isQuickWin
       }
     })
-
-    // If a domain had no direct recommendations, derive one from the scorecard
-    if (recs.length === 0) {
-      const card = raw.readiness_scorecard?.[dom.scorecardKey] || raw.readiness_scorecard?.[dom.key]
-      recs.push({
-        id: `rec-${dom.key}-default`,
-        phase: dom.key,
-        title: card ? `Establish ${dom.title} AI Guardrails` : `Pilot ${dom.title} Refinement`,
-        priority: 'medium',
-        effort: '1 sprint',
-        expectedImpact: card ? `Score ${card.readiness_score}/10 readiness` : 'Foundational impact',
-        justification: card?.verdict || `Assessment completed for ${dom.title}.`,
-        examplePractice: 'Establish peer reviews and verifiable criteria before adopting autonomous tools.',
-        quickWin: false
-      })
-    }
 
     phases[dom.key] = {
       phase: dom.key,
@@ -295,18 +300,19 @@ export function adaptBackendReportToDiagnosticReport(raw: BackendSynthesisOutput
     id: raw.session_id || `rep-${Date.now()}`,
     repoName: repo.name || 'Repository',
     generatedAt: raw.generated_at ? new Date(raw.generated_at).toLocaleString() : 'Generated just now',
-    headline: exec.headline || 'AI-SDLC Compass Diagnostic Assessment',
-    executiveSummary: exec.summary_text || 'Assessment synthesized across Spec, Code, Test, and Ops domains.',
+    headline: exec.headline || '',
+    executiveSummary: exec.summary_text || '',
     metrics: {
-      highPriorityCount: Math.max(highPriorityCount, 1),
+      highPriorityCount,
       quickWinsCount,
-      phasesCoveredCount: 4
+      phasesCoveredCount: Object.values(phases).filter((p) => p.recommendations.length > 0).length
     },
     projectProfile: {
-      codeFilesSummary: `${repo.name || 'Repository'} scope with ${repo.languages?.join(', ') || 'code'} and ${repo.frameworks?.join(', ') || 'dependencies'}.`,
-      teamSummary: exec.overall_readiness ? `${capitalize(exec.overall_readiness)} readiness profile` : '8 members · Scrum',
-      aiMaturitySummary: `Overall AI Readiness Index: ${exec.overall_readiness_score || 5.0} / 10`,
-      qualitySummary: raw.readiness_scorecard?.harness_hygiene?.verdict || 'Quality indicators evaluated from repository evidence.'
+      codeFilesSummary: [repo.languages?.join(', '), repo.frameworks?.join(', ')].filter(Boolean).join(' · '),
+      teamSummary: exec.overall_readiness ? `${capitalize(exec.overall_readiness)} readiness profile` : '',
+      aiMaturitySummary:
+        exec.overall_readiness_score != null ? `Overall AI Readiness Index: ${exec.overall_readiness_score} / 10` : '',
+      qualitySummary: raw.readiness_scorecard?.harness_hygiene?.verdict || ''
     },
     evidenceGapAlert:
       raw.knowledge_gaps_summary?.unresolved_gaps && raw.knowledge_gaps_summary.unresolved_gaps.length > 0
@@ -317,16 +323,10 @@ export function adaptBackendReportToDiagnosticReport(raw: BackendSynthesisOutput
         : undefined,
     phases,
     scopeAndLimitations: {
-      currentPocScope: [
-        raw.disclaimers?.scope || 'This diagnostic covers the reviewed repository scope only.',
-        raw.disclaimers?.accuracy || 'Signals are estimates based on static analysis; executed metrics were not measured.',
-        raw.disclaimers?.affiliation || 'Independent concept. Not affiliated with or endorsed by Accenture.'
-      ],
-      enterpriseRoadmap: [
-        'Multi-repository portfolio scanning and aggregated organizational dashboards',
-        'Direct pipeline gate integration with automated PR comments and security checks',
-        'Continuous AI readiness tracking over sprint cycles'
-      ]
+      currentPocScope: [raw.disclaimers?.scope, raw.disclaimers?.accuracy, raw.disclaimers?.affiliation].filter(
+        (d): d is string => !!d
+      ),
+      enterpriseRoadmap: []
     }
   }
 }
