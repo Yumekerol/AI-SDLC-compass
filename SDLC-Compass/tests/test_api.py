@@ -341,6 +341,176 @@ def test_full_diagnostic_api_lifecycle():
     print("ALL 12 LIFECYCLE TESTS PASSED PERFECTLY!")
 
 
+def test_agents_failure_creates_notification():
+    """A failed pipeline turn must leave a notification, not just an error
+    status: someone who chose "notify me when done" isn't watching the page."""
+    import httpx
+
+    create_res = client.post(
+        "/api/v1/sessions",
+        json={"source_type": "git", "git_url": "https://github.com/fastapi/fastapi", "consent_given": True},
+    )
+    session_id = create_res.json()["session_id"]
+
+    with patch(
+        "backend.orchestrator.supervisor.Supervisor._call_agents",
+        new_callable=AsyncMock,
+        side_effect=httpx.ConnectError("agents down"),
+    ):
+        client.post(f"/api/v1/sessions/{session_id}/diagnose")
+        conv = _wait_until_not_processing(session_id)
+
+    assert conv["status"] == "error"
+    notifications = client.get(f"/api/v1/sessions/{session_id}/notifications").json()["notifications"]
+    failed = [n for n in notifications if n["type"] == "agents_failed"]
+    assert len(failed) == 1
+    assert failed[0]["level"] == "error"
+    assert "agents down" in failed[0]["message"]
+
+
+def _new_diagnosing_session() -> str:
+    """A session that looks like it has a pipeline turn in flight."""
+    import asyncio
+
+    from backend.storage import get_storage
+
+    session_id = client.post(
+        "/api/v1/sessions",
+        json={"source_type": "git", "git_url": "https://github.com/fastapi/fastapi", "consent_given": True},
+    ).json()["session_id"]
+
+    async def mark_running():
+        store = await get_storage()
+        s = await store.get_session(session_id)
+        s.status = "diagnosing"
+        s.processing = True
+        await store.update_session(s)
+
+    asyncio.run(mark_running())
+    return session_id
+
+
+def test_cancel_diagnostic():
+    session_id = _new_diagnosing_session()
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as agents_post:
+        res = client.post(f"/api/v1/sessions/{session_id}/cancel-diagnostic")
+    assert res.status_code == 200
+    assert agents_post.await_args.args[0].endswith("/pipeline/cancel")
+    assert agents_post.await_args.kwargs["json"] == {"session_id": session_id}
+
+    conv = client.get(f"/api/v1/sessions/{session_id}/conversation").json()
+    assert conv["status"] == "cancelled"
+    assert conv["processing"] is False
+    assert "Diagnostic stopped" in conv["messages"][-1]["content"]
+
+    # Nothing left to cancel.
+    assert client.post(f"/api/v1/sessions/{session_id}/cancel-diagnostic").status_code == 409
+
+
+def test_starting_a_diagnostic_cancels_abandoned_ones():
+    """The local model serves one request at a time, so an abandoned run
+    would slow the new one down."""
+    abandoned = _new_diagnosing_session()
+    fresh = client.post(
+        "/api/v1/sessions",
+        json={"source_type": "git", "git_url": "https://github.com/fastapi/fastapi", "consent_given": True},
+    ).json()["session_id"]
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock), patch(
+        "backend.orchestrator.supervisor.Supervisor._call_agents",
+        new_callable=AsyncMock,
+        return_value=FAKE_NEEDS_INPUT,
+    ):
+        client.post(f"/api/v1/sessions/{fresh}/diagnose")
+        _wait_until_not_processing(fresh)
+
+    assert client.get(f"/api/v1/sessions/{abandoned}/conversation").json()["status"] == "cancelled"
+    assert client.get(f"/api/v1/sessions/{fresh}/conversation").json()["status"] == "diagnosing"
+
+
+def test_cancelled_turn_does_not_record_an_error():
+    """The turn that fails because it was cancelled must leave the
+    cancellation alone: no error status, no "agents failed" notification."""
+    import asyncio
+
+    import httpx
+
+    from backend.orchestrator.supervisor import Supervisor
+    from backend.storage import get_storage
+
+    session_id = _new_diagnosing_session()
+
+    async def run():
+        store = await get_storage()
+        supervisor = Supervisor(store)
+
+        async def cancelled_mid_turn(path, payload):
+            with patch("httpx.AsyncClient.post", new_callable=AsyncMock):
+                await supervisor.cancel_diagnostic(await store.get_session(session_id))
+            raise httpx.HTTPStatusError("409 Pipeline cancelled", request=None, response=None)
+
+        with patch.object(Supervisor, "_call_agents", side_effect=cancelled_mid_turn):
+            await supervisor.continue_user_turn(session_id, "an answer")
+
+    asyncio.run(run())
+
+    conv = client.get(f"/api/v1/sessions/{session_id}/conversation").json()
+    assert conv["status"] == "cancelled"
+    notifications = client.get(f"/api/v1/sessions/{session_id}/notifications").json()["notifications"]
+    assert not [n for n in notifications if n["type"] == "agents_failed"]
+
+
+def _fake_status_response(status_code: int, body: dict | None = None):
+    import httpx
+
+    return httpx.Response(status_code, json=body or {}, request=httpx.Request("GET", "http://agents/pipeline/status"))
+
+
+def test_pipeline_progress_mapping():
+    """Supervisor.get_pipeline_progress turns the Agent Service's
+    /pipeline/status into the phase/step shape the conversation poll exposes."""
+    import asyncio
+
+    from backend.orchestrator.supervisor import Supervisor
+
+    supervisor = Supervisor(store=None)
+
+    def progress_for(response):
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response):
+            return asyncio.run(supervisor.get_pipeline_progress("s1"))
+
+    # Still cloning: the Agent Service has no state for the session yet.
+    assert progress_for(_fake_status_response(404))["phase"] == "starting"
+
+    running = progress_for(_fake_status_response(200, {
+        "status": "running", "current_index": 1, "current_role": "code_refactoring",
+        "current_label": "Code & Refactoring", "completed_reports_count": 1,
+    }))
+    assert running == {
+        "phase": "specialist", "step": 2, "total_steps": 4, "current_role": "code_refactoring",
+        "current_label": "Code & Refactoring", "completed_specialists": 1,
+    }
+
+    waiting = progress_for(_fake_status_response(200, {
+        "status": "needs_input", "current_index": 2, "current_role": "qa_testing",
+        "current_label": "QA & Testing", "completed_reports_count": 2,
+    }))
+    assert (waiting["phase"], waiting["step"]) == ("waiting_for_answer", 3)
+
+    synthesizing = progress_for(_fake_status_response(200, {
+        "status": "running", "current_index": 3, "current_role": "devops_monitoring",
+        "current_label": "DevOps & Monitoring", "completed_reports_count": 4,
+    }))
+    assert synthesizing["phase"] == "synthesizing"
+
+    # The Agent Service being unreachable must not break the conversation poll.
+    import httpx
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=httpx.ConnectError("down")):
+        assert asyncio.run(supervisor.get_pipeline_progress("s1")) is None
+
+
 if __name__ == "__main__":
     test_health_check()
     test_create_session_requires_consent()

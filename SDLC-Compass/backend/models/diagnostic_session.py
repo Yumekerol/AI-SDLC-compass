@@ -34,6 +34,7 @@ class SessionStatus(str, Enum):
     SYNTHESIZING = "synthesizing"
     REPORT_READY = "report_ready"
     DRAFT_SAVED = "draft_saved"
+    CANCELLED = "cancelled"
     ERROR = "error"
 
 
@@ -76,6 +77,7 @@ class NotificationType(str, Enum):
     SCAN_FAILED = "scan_failed"
     SPECIALIST_QUESTION = "specialist_question"
     REPORT_READY = "report_ready"
+    AGENTS_FAILED = "agents_failed"
 
 
 class NotificationLevel(str, Enum):
@@ -168,6 +170,7 @@ _DEFAULT_LEVELS: dict[str, str] = {
     NotificationType.SCAN_FAILED.value: NotificationLevel.ERROR.value,
     NotificationType.SPECIALIST_QUESTION.value: NotificationLevel.WARNING.value,
     NotificationType.REPORT_READY.value: NotificationLevel.SUCCESS.value,
+    NotificationType.AGENTS_FAILED.value: NotificationLevel.ERROR.value,
     # Backward compatibility with existing "needs_input" type
     "needs_input": NotificationLevel.WARNING.value,
 }

@@ -41,6 +41,8 @@ async def start_diagnostic(session_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=404, detail="Session not found")
 
     supervisor = Supervisor(store)
+    # Only one diagnostic can use the local model at a time.
+    await supervisor.cancel_other_running(session.id)
     session.status = SessionStatus.DIAGNOSING
     session.processing = True
     session.agent_statuses = {role: {"status": "analyzing", "progress": 0.1} for role in ROLE_LABELS}
@@ -58,14 +60,41 @@ async def start_diagnostic(session_id: str, background_tasks: BackgroundTasks):
     }
 
 
-@router.get("/{session_id}/conversation")
-async def get_conversation(session_id: str):
-    """Get full diagnostic conversation history and agent statuses. Poll this
-    while `processing` is true to find out when a background turn finishes."""
+@router.post("/{session_id}/cancel-diagnostic")
+async def cancel_diagnostic(session_id: str):
+    """Stop the running diagnostic: the specialist working right now is
+    interrupted and the session is marked cancelled. POST /diagnose starts
+    it again from the beginning."""
     store = await get_storage()
     session = await store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.status != SessionStatus.DIAGNOSING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"No diagnostic to cancel (status: {session.status.value}).",
+        )
+
+    await Supervisor(store).cancel_diagnostic(session)
+    return {"session_id": session.id, "status": session.status, "processing": False}
+
+
+@router.get("/{session_id}/conversation")
+async def get_conversation(session_id: str):
+    """Get full diagnostic conversation history and agent statuses. Poll this
+    while `processing` is true to find out when a background turn finishes.
+
+    `pipeline_progress` (null outside the diagnosing step, or if the Agent
+    Service can't be reached) says which specialist is working right now —
+    see Supervisor.get_pipeline_progress for its shape."""
+    store = await get_storage()
+    session = await store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    progress = None
+    if session.status == SessionStatus.DIAGNOSING:
+        progress = await Supervisor(store).get_pipeline_progress(session_id)
 
     return {
         "session_id": session.id,
@@ -74,6 +103,7 @@ async def get_conversation(session_id: str):
         "processing": session.processing,
         "status": session.status,
         "error_message": session.error_message,
+        "pipeline_progress": progress,
     }
 
 

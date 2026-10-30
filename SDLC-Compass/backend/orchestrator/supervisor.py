@@ -61,6 +61,110 @@ class Supervisor:
             resp.raise_for_status()
             return resp.json()
 
+    @staticmethod
+    def _mark_agents_failed(session: DiagnosticSession, error: Exception) -> None:
+        """Record a failed pipeline turn — including a notification, since a
+        user who chose "notify me" has left the page and won't see the error
+        otherwise. The caller persists the session."""
+        session.status = SessionStatus.ERROR
+        session.error_message = str(error)
+        add_notification(
+            session,
+            type=NotificationType.AGENTS_FAILED.value,
+            title="The specialists hit an error",
+            message=f"The diagnostic stopped: {error}",
+            route_hint="/questions",
+        )
+
+    async def _was_cancelled(self, session_id: str) -> bool:
+        """Whether the session was cancelled while a pipeline turn ran. A
+        background turn holds its own copy of the session, so it must check
+        the store before writing that copy back over the cancellation."""
+        current = await self.store.get_session(session_id)
+        return bool(current and current.status == SessionStatus.CANCELLED)
+
+    async def cancel_diagnostic(self, session: DiagnosticSession) -> None:
+        """Stop this session's pipeline and mark it cancelled (persists).
+
+        The status is saved before asking the Agent Service to stop, so the
+        background turn that is about to fail sees CANCELLED and leaves the
+        session alone instead of recording an error."""
+        session.status = SessionStatus.CANCELLED
+        session.processing = False
+        session.error_message = None
+        stopped = ConversationMessage(
+            id=f"msg-{uuid4().hex[:8]}",
+            role="supervisor",
+            content="Diagnostic stopped. You can restart it whenever you're ready.",
+        )
+        session.conversation.append(stopped.model_dump(mode="json"))
+        await self.store.update_session(session)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(f"{settings.agents_url}/pipeline/cancel", json={"session_id": session.id})
+        except httpx.HTTPError as e:
+            logger.warning(f"Could not ask the Agent Service to cancel session {session.id}: {e}")
+
+    async def cancel_other_running(self, keep_session_id: str) -> list[str]:
+        """Cancel every other diagnostic still running. The local model
+        serves one request at a time, so an abandoned run would otherwise
+        slow the new one down until it reaches a question."""
+        cancelled = []
+        for other in await self.store.list_sessions():
+            if other.id != keep_session_id and other.status == SessionStatus.DIAGNOSING and other.processing:
+                await self.cancel_diagnostic(other)
+                cancelled.append(other.id)
+        if cancelled:
+            logger.info(f"Cancelled abandoned diagnostics {cancelled} to start {keep_session_id}")
+        return cancelled
+
+    async def get_pipeline_progress(self, session_id: str) -> dict | None:
+        """Where the Agent Service's pipeline is for this session, so the UI
+        can show something during the minutes a specialist runs before (or
+        without) asking a question. None if the Agent Service can't be asked;
+        progress is informational and must never break the conversation poll.
+
+        phase is one of: starting (cloning, nothing running yet), specialist,
+        synthesizing, waiting_for_answer, complete, error.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{settings.agents_url}/pipeline/status", params={"session_id": session_id})
+        except httpx.HTTPError as e:
+            logger.warning(f"Could not read pipeline progress for session {session_id}: {e}")
+            return None
+
+        total = len(ROLE_LABELS)
+        if resp.status_code == 404:
+            # No pipeline state yet: the Agent Service is still cloning the repo.
+            return {"phase": "starting", "step": 0, "total_steps": total, "current_role": None,
+                    "current_label": None, "completed_specialists": 0}
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+        job_status = data.get("status")
+        completed = data.get("completed_reports_count", 0)
+        if job_status == "needs_input":
+            phase = "waiting_for_answer"
+        elif job_status in ("complete", "error"):
+            phase = job_status
+            completed = total if job_status == "complete" else completed
+        elif completed >= total:
+            phase = "synthesizing"
+        else:
+            phase = "specialist"
+
+        return {
+            "phase": phase,
+            "step": min(data.get("current_index", completed) + 1, total) if phase != "complete" else total,
+            "total_steps": total,
+            "current_role": data.get("current_role"),
+            "current_label": data.get("current_label"),
+            "completed_specialists": completed,
+        }
+
     def _build_knowledge_gaps(self, reports: list[dict]) -> dict[str, list[str]]:
         """Turn the specialists' own output into the Step-3 sidebar's gap
         list: a low-confidence finding is something the repo only partly
@@ -203,6 +307,7 @@ class Supervisor:
             profile = ContextualProfile(session_id=session.id, scanner_signals=session.scanner_output or {})
             await self.store.save_profile(profile)
 
+        cancelled = False
         try:
             if session.source_type != SourceType.GIT or not session.git_url:
                 # The Agent Service clones its own copy from a git URL (see
@@ -223,14 +328,18 @@ class Supervisor:
                     "scan_output": session.scanner_output or {},
                 },
             )
-            await self._handle_pipeline_result(session, result)
+            cancelled = await self._was_cancelled(session.id)
+            if not cancelled:
+                await self._handle_pipeline_result(session, result)
         except Exception as e:
-            logger.exception(f"Pipeline start failed for session {session.id}: {e}")
-            session.status = SessionStatus.ERROR
-            session.error_message = str(e)
+            cancelled = await self._was_cancelled(session.id)
+            if not cancelled:
+                logger.exception(f"Pipeline start failed for session {session.id}: {e}")
+                self._mark_agents_failed(session, e)
         finally:
-            session.processing = False
-            await self.store.update_session(session)
+            if not cancelled:
+                session.processing = False
+                await self.store.update_session(session)
 
     async def continue_user_turn(self, session_id: str, content: str) -> None:
         """Background task: forward the user's answer to whichever
@@ -242,16 +351,21 @@ class Supervisor:
             logger.warning(f"continue_user_turn: session {session_id} vanished before the background task ran")
             return
 
+        cancelled = False
         try:
             result = await self._call_agents("/pipeline/reply", {"session_id": session_id, "answer": content})
-            await self._handle_pipeline_result(session, result)
+            cancelled = await self._was_cancelled(session_id)
+            if not cancelled:
+                await self._handle_pipeline_result(session, result)
         except Exception as e:
-            logger.exception(f"Pipeline resume failed for session {session_id}: {e}")
-            session.status = SessionStatus.ERROR
-            session.error_message = str(e)
+            cancelled = await self._was_cancelled(session_id)
+            if not cancelled:
+                logger.exception(f"Pipeline resume failed for session {session_id}: {e}")
+                self._mark_agents_failed(session, e)
         finally:
-            session.processing = False
-            await self.store.update_session(session)
+            if not cancelled:
+                session.processing = False
+                await self.store.update_session(session)
 
     async def run_synthesis(self, session: DiagnosticSession) -> dict:
         """There's no separate synthesis step to trigger anymore — the Agent

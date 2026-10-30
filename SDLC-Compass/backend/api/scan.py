@@ -59,16 +59,17 @@ async def execute_scan_task(session_id: str):
         api_endpoint: str = f"job/?scan_id={session.scan_id}"
         url: str = f"{settings.scanner_url_base}/{api_endpoint}"
 
-        _safety_limit = 100
+        # The scanner reports its own failures (400), so this only guards
+        # against a scanner that stopped answering. 100 x 0.5 s (~50 s) was
+        # shorter than a slow clone, which failed perfectly good scans.
+        _wait_for_sec = 1.0
+        _safety_limit = 600  # ~10 minutes
 
         for _ in range(0, _safety_limit):
             response: requests.Response = requests.get(url)
 
             if response.status_code == status.HTTP_204_NO_CONTENT:
-                # if not finished yet, wait for a bit and then try again
-                # honestly, this is a bit ugly, i just don't know any
-                # other way to make it work
-                _wait_for_sec = 0.5
+                # not finished yet: wait a bit and try again
                 await asyncio.sleep(_wait_for_sec)
                 continue
 
