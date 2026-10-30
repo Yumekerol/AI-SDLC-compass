@@ -234,5 +234,13 @@ async def resume_specialist(spec: SpecialistSpec, thread_id: str, answer: str, c
     prior_messages = prior_state.values.get("messages", []) if prior_state and prior_state.values else []
     counter[0] = _count_tool_calls(prior_messages, spec.tool_names)
 
-    result = await agent.ainvoke(Command(resume=answer), config=config)
+    # The model can call ask_user several times in one step (parallel tool
+    # calls), leaving several interrupts pending, and a bare Command(resume=...)
+    # is rejected then. The person only saw the first question (see
+    # _extract_interrupt_question), so answer just that one by id; any others
+    # stay pending and come back from this call as the next question.
+    pending = list(prior_state.interrupts) if prior_state else []
+    resume = {pending[0].id: answer} if len(pending) > 1 else answer
+
+    result = await agent.ainvoke(Command(resume=resume), config=config)
     return _finish(spec, thread_id, result)

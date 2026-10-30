@@ -131,9 +131,13 @@ def build_tools(ctx: RunContext) -> dict[str, BaseTool]:
             return f"Error: invalid pattern: {e}"
 
         matches: list[str] = []
+        # Models often write repo-relative globs as "/tests/**"; Path.glob
+        # rejects absolute patterns with NotImplementedError, which would
+        # otherwise escape the tool and fail the whole pipeline.
+        glob = glob.lstrip("/") or "**/*"
         try:
             candidates = list(ctx.root.glob(glob))
-        except ValueError as e:
+        except (ValueError, NotImplementedError) as e:
             return f"Error: invalid glob: {e}"
 
         for path in candidates:

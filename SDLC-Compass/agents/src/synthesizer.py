@@ -57,7 +57,9 @@ class RecommendationPhase(BaseModel):
 
 class ExecutiveSummary(BaseModel):
     headline: str
-    overall_readiness: str
+    overall_readiness: Literal["Critical", "Weak", "Developing", "Solid", "Strong"]
+    """Same fixed set as ReadinessScore.readiness_label, for the same reason:
+    left as a free string, a local model returned "And" here in real testing."""
     overall_readiness_score: float
     summary_text: str
 
@@ -81,7 +83,8 @@ DevOps & Monitoring), each a list of discrete findings with evidence. Your job:
 
 1. Write a short, honest executive summary grounded in what the specialists actually found \
    (overall_readiness_score is 0-10, aggregating the 4 domain scores; be conservative — a repo with \
-   little evidence should not score high).
+   little evidence should not score high). overall_readiness is ONE of exactly: "Critical", "Weak", \
+   "Developing", "Solid", "Strong".
 2. Produce one readiness_scorecard entry per domain (readiness_score and opportunity_score 0-10, \
    both grounded in the findings, not guessed). readiness_label is ONE of exactly: "Critical", \
    "Weak", "Developing", "Solid", "Strong" — never a sentence or anything else. verdict is where the \
