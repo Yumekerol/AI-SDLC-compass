@@ -83,6 +83,13 @@ K8S_NAMES = {f"{n}.{ext}" for n in ("deployment", "service", "statefulset", "dae
              for ext in ("yaml", "yml")}
 PROXY_NAMES = {"nginx.conf": "Nginx", "httpd.conf": "Apache HTTP Server",
                "caddyfile": "Caddy", "haproxy.cfg": "HAProxy"}
+# Pastas que contêm fixtures de teste ou código de terceiros: nunca são infraestrutura do projeto
+EXCLUDED_DIR_NAMES = {
+    "testdata", "test-data", "testcharts", "fixtures", "__fixtures__", "__snapshots__",
+    "third_party", "third-party", "vendor", "node_modules",
+}
+K8S_DIRS = {"k8s", "kubernetes"}
+YAML_SUFFIXES = {".yaml", ".yml"}
 
 
 def _is_dockerfile(name: str) -> bool:
@@ -100,7 +107,7 @@ def _iac_tool(name: str, suffix: str, dirs: set[str]) -> str | None:
         return "Helm"
     if lower in {"kustomization.yaml", "kustomization.yml"}:
         return "Kustomize"
-    if lower in K8S_NAMES or dirs & {"k8s", "kubernetes"}:
+    if lower in K8S_NAMES or (dirs & K8S_DIRS and suffix in YAML_SUFFIXES):
         return "Kubernetes"
     if lower in {"ansible.cfg", "playbook.yml", "playbook.yaml", "inventory.ini"}:
         return "Ansible"
@@ -127,9 +134,12 @@ def collect_infrastructure(
         dirs = {p.lower() for p in PurePosixPath(relative).parts[:-1]}
         name, suffix = path.name, path.suffix.lower()
 
+        if dirs & EXCLUDED_DIR_NAMES:
+            continue       
+
         dockerfile = _is_dockerfile(name)
         if not (dockerfile or name in INFRA_FILE_NAMES or suffix == ".tf"
-                or dirs & {"k8s", "kubernetes"}):
+                or (dirs & K8S_DIRS and suffix in YAML_SUFFIXES)):
             continue
 
         found.add(relative)
@@ -154,6 +164,7 @@ def collect_infrastructure(
         "has_containerization": bool(container_files),
         "container_files": sorted(container_files)[:MAX_LISTED_ITEMS],
         "dockerfile_paths": sorted(dockerfiles, key=lambda f: (len(PurePosixPath(f).parts), f))[:MAX_LISTED_ITEMS],
+        "iac_file_counts_by_tool": {t: len(f) for t, f in sorted(iac_files.items())},
         "iac_tools": sorted(iac_files),
         "iac_files_by_tool": {t: sorted(f)[:MAX_LISTED_ITEMS] for t, f in sorted(iac_files.items())},
         "reverse_proxies": sorted(proxies),

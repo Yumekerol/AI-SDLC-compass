@@ -25,34 +25,51 @@ _ONBOARDING_RE = re.compile(r"install|setup|onboarding|getting[-_ ]?started|quic
 _ADR_NAME_RE = re.compile(r"^adr[-_]?\d+", re.IGNORECASE)
 
 
+
 def _classify_doc(relative: str) -> list[str]:
-    """Categorias de documentação de um caminho (lista vazia se não for documentação)."""
+    """Devolve uma única categoria de documentação por ficheiro."""
     path = PurePosixPath(relative)
     suffix = path.suffix.lower()
     stem = path.stem.lower()
+
     if suffix not in DOC_EXTENSIONS and suffix != "":
         return []
 
     dirs = [part.lower() for part in path.parts[:-1]]
-    categories: list[str] = []
-    if stem == "readme":
-        categories.append("readme")
-    if stem in _CHANGELOG_STEMS:
-        categories.append("changelog")
-    if any(d in _ADR_DIR_NAMES for d in dirs) or _ADR_NAME_RE.match(stem):
-        categories.append("adr")
-    if _RUNBOOK_RE.search(relative):
-        categories.append("runbook")
-    if _ONBOARDING_RE.search(path.name):
-        categories.append("install_onboarding")
-    if any(d in _DOC_DIR_NAMES for d in dirs):
-        categories.append("docs_dir")
 
-    if suffix == "" and not ({"readme", "changelog"} & set(categories)):
-        return []     # ficheiros sem extensão só contam se forem README/CHANGELOG
-    if not categories:
-        return ["other"] if suffix in DOC_MARKUP_EXTENSIONS else []   # .txt solto ≠ documentação
-    return categories
+    # Prioridade 1: README
+    if stem == "readme":
+        return ["readme"]
+
+    # Prioridade 2: Changelog
+    if stem in _CHANGELOG_STEMS:
+        return ["changelog"]
+
+    # Prioridade 3: ADR
+    if any(d in _ADR_DIR_NAMES for d in dirs) or _ADR_NAME_RE.match(stem):
+        return ["adr"]
+
+    # Prioridade 4: Runbook
+    if _RUNBOOK_RE.search(relative):
+        return ["runbook"]
+
+    # Prioridade 5: Instalação e onboarding
+    if _ONBOARDING_RE.search(path.name):
+        return ["install_onboarding"]
+
+    # Prioridade 6: Diretórios de documentação
+    if any(d in _DOC_DIR_NAMES for d in dirs):
+        return ["docs_dir"]
+
+    # Ficheiros sem extensão só contam se forem README ou CHANGELOG
+    if suffix == "":
+        return []
+
+    # Outros ficheiros Markdown / documentação
+    if suffix in DOC_MARKUP_EXTENSIONS:
+        return ["other"]
+
+    return []
 
 
 def collect_documentation_inventory(

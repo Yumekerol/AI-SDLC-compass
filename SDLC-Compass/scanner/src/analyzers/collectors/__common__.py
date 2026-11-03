@@ -11,8 +11,6 @@ from ...config import settings
 
 logger = logging.getLogger("analyzer_common_utils")
 
-
-
 DEFAULT_MAX_COMMITS = 2_000        # limite de commits analisados (evita timeouts)
 HISTORY_TIMEOUT_SECONDS = 180       # timeout do `git log` completo
 TOP_N_DEFAULT = 10

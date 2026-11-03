@@ -17,7 +17,7 @@ NON_CODE_EXTENSIONS = {".md", ".json", ".yaml", ".yml", ".toml", ".xml", ".html"
 E2E_DIR_MARKERS = {"e2e", "end-to-end", "end_to_end", "cypress", "playwright", "selenium",
                    "puppeteer", "acceptance"}
 INTEGRATION_DIR_MARKERS = {"integration", "integrations", "integration_tests", "integration-tests",
-                           "itests", "it"}
+                           "itests"}
 UNIT_DIR_MARKERS = {"unit", "units", "unit_tests", "unit-tests"}
 
 TEST_CONFIG_PATTERNS = [
@@ -39,17 +39,46 @@ TEST_CONFIG_PATTERNS = [
 def _classify_test_type(relative: str) -> str:
     path = PurePosixPath(relative)
     dirs = {part.lower() for part in path.parts[:-1]}
-    name = path.name
-    lowered = name.lower()
+    name = path.name.lower()
 
-    if dirs & E2E_DIR_MARKERS or re.search(r"e2e|end[-_]to[-_]end|\.cy\.", lowered):
+    # E2E
+    e2e_patterns = [
+        r"(^|[._-])e2e([._-]|$)",
+        r"end[-_]to[-_]end",
+        r"\.cy\.",
+    ]
+
+    if dirs & E2E_DIR_MARKERS or any(
+        re.search(pattern, name) for pattern in e2e_patterns
+    ):
         return "e2e"
-    if (dirs & INTEGRATION_DIR_MARKERS or "integration" in lowered
-            or re.search(r"IT(Case)?\.(java|kt|scala)$", name)):
+
+    # Integration
+    integration_patterns = [
+        r"(^|[._-])integration([._-]|$)",
+        r"(^|[._-])int([._-]|$)",
+        r"(^|[._-])it_test([._-]|$)",
+    ]
+
+    if dirs & INTEGRATION_DIR_MARKERS or any(
+        re.search(pattern, name) for pattern in integration_patterns
+    ):
         return "integration"
-    if dirs & UNIT_DIR_MARKERS or "unit" in lowered:
+
+    if re.search(r"it(case)?\.(java|kt|scala)$", name):
+        return "integration"
+
+    # Unit
+    unit_patterns = [
+        r"(^|[._-])unit([._-]|$)",
+    ]
+
+    if dirs & UNIT_DIR_MARKERS or any(
+        re.search(pattern, name) for pattern in unit_patterns
+    ):
         return "unit"
-    return "unclassified"   # não se assume "unit" sem evidência
+
+    return "unclassified"
 
 
 def collect_test_inventory(
@@ -61,18 +90,22 @@ def collect_test_inventory(
 
     for path in _resolve_files(repo_path, files):
         relative = _relative_path(repo_path, path)
+        suffix = path.suffix.lower()
+
+        # Detectar configurações de frameworks
         for pattern, framework in TEST_CONFIG_PATTERNS:
             if pattern.match(path.name):
                 configs.append({"file": relative, "framework": framework})
                 break
 
+        # Considerar apenas ficheiros de código no inventário
+        if suffix not in LANGUAGE_BY_EXTENSION:
+            continue
+
         if _is_test_file(relative):
-            if path.name != "conftest.py":
-                tests[relative] = _classify_test_type(relative)
+            tests[relative] = _classify_test_type(relative)
         else:
-            suffix = path.suffix.lower()
-            if suffix in LANGUAGE_BY_EXTENSION and suffix not in NON_CODE_EXTENSIONS:
-                code_files_non_test += 1
+            code_files_non_test += 1
 
     by_type = Counter(tests.values())
     ordered = sorted(tests.items())
