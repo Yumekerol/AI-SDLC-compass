@@ -74,7 +74,7 @@ No manual database setup is required.
 > This means **you can run the complete end-to-end flow (scan → diagnose → report)
 > without Ollama installed, without any API keys, and without any external services.**
 
-The `LLM_PROVIDER` env var (default `ollama`) and the `MockLLMProvider` class exist
+The `LLM_PROVIDER` env var (default `ollama`) exists
 as scaffolding for a future LLM-powered phase. When that phase is implemented:
 
 - The prototype will call Ollama by default — set `LLM_PROVIDER=ollama` and run
@@ -88,9 +88,8 @@ as scaffolding for a future LLM-powered phase. When that phase is implemented:
   OPENAI_MODEL=gpt-4o
   ```
 
-- There is no `LLM_PROVIDER=mock` enum value. `MockLLMProvider` is selected
-  automatically as a fallback when no valid provider + credentials combination is
-  found (e.g. `LLM_PROVIDER=openai` without `OPENAI_API_KEY` set).
+- There is no mock LLM. A cloud provider without its API key (e.g.
+  `LLM_PROVIDER=openai` without `OPENAI_API_KEY`) is a configuration error.
 
 ---
 

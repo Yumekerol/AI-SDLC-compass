@@ -94,7 +94,7 @@ flowchart TD
 5. `report.synthesized`: Final roadmap compiled; triggers PDF compilation and notification.
 
 ### 2. Activating Real LLMs (Zero-Code Provider Swap)
-The backend abstraction (`backend/llm/`) is already built. To switch from Mock/Ollama to enterprise models, update your `.env`:
+The backend abstraction (`backend/llm/`) is already built. To switch from Ollama to enterprise models, update your `.env`:
 ```env
 # Switch to Google Vertex AI / Gemini
 LLM_PROVIDER=google

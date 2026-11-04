@@ -3,7 +3,6 @@ import ConnectView from '@/views/ConnectView.vue'
 import ReviewSignalsView from '@/views/ReviewSignalsView.vue'
 import QuestionsView from '@/views/QuestionsView.vue'
 import ReportView from '@/views/ReportView.vue'
-import AdvisorChatView from '@/views/AdvisorChatView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -46,8 +45,5 @@ const router = createRouter({
     return { top: 0 }
   }
 })
-
-// Keep AdvisorChatView referenced so tree-shaking / unused import warnings don't trigger if strict
-export { AdvisorChatView }
 
 export default router

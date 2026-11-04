@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type {
   RepoSignals,
-  UserAnswer,
   DiagnosticReport,
   AppError,
   ConnectPayload
@@ -18,7 +17,6 @@ export const useSessionStore = defineStore('session', () => {
 
   // State
   const repoSignals = ref<RepoSignals | null>(null)
-  const answers = ref<Record<string, UserAnswer>>({})
   const diagnostic = ref<DiagnosticReport | null>(null)
   const currentStep = ref<number>(1)
 
@@ -34,8 +32,6 @@ export const useSessionStore = defineStore('session', () => {
 
   // Computed properties
   const isConnected = computed(() => !!repoSignals.value)
-  const answersList = computed(() => Object.values(answers.value))
-  const answeredCount = computed(() => answersList.value.filter((a) => !a.skipped).length)
   const hasDiagnostic = computed(() => !!diagnostic.value)
   /** True when the displayed signals come from the in-memory mock fixture, not a real scan */
   const isMock = computed(() => repoSignals.value?.fromMock !== false)
@@ -199,34 +195,7 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * Screen 3: Record an answer to a question (preserves all answers)
-   */
-  async function recordAnswer(answer: UserAnswer) {
-    answers.value[answer.questionId] = answer
-    try {
-      await api.submitAnswer(answer)
-    } catch {
-      // Offline fallback: keep local answer stored in session state
-      console.warn('API sync warning: answer cached locally in Pinia session')
-    }
-  }
-
-  /**
-   * Skip a question
-   */
-  async function skipQuestion(questionId: string, topic: string) {
-    const skippedAnswer: UserAnswer = {
-      questionId,
-      topic,
-      answerText: 'Skipped by user',
-      skipped: true,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-    await recordAnswer(skippedAnswer)
-  }
-
-  /**
-   * Screen 4: Generate diagnostic from signals + answers
+   * Screen 4: Generate diagnostic for the scanned session
    */
   async function generateDiagnosticReport() {
     isLoading.value = true
@@ -237,10 +206,8 @@ export const useSessionStore = defineStore('session', () => {
       try {
         isLoading.value = true
         loadingMessage.value = 'Synthesizing evidence & generating 4-domain AI diagnostic...'
-        const signals = repoSignals.value || mockRepoSignals
         const report = await api.generateDiagnostic(
-          signals,
-          answersList.value,
+          repoSignals.value,
           sessionId.value || undefined,
           (msg) => {
             loadingMessage.value = msg
@@ -298,10 +265,8 @@ export const useSessionStore = defineStore('session', () => {
       try {
         isLoading.value = true
         loadingMessage.value = 'Regenerating diagnostic report with fresh recommendations...'
-        const signals = repoSignals.value || mockRepoSignals
         const report = await api.regenerateDiagnostic(
-          signals,
-          answersList.value,
+          repoSignals.value,
           sessionId.value || undefined,
           (msg) => {
             loadingMessage.value = msg
@@ -372,7 +337,6 @@ export const useSessionStore = defineStore('session', () => {
     // State
     sessionId,
     repoSignals,
-    answers,
     diagnostic,
     currentStep,
     isLoading,
@@ -381,8 +345,6 @@ export const useSessionStore = defineStore('session', () => {
     error,
     // Computed
     isConnected,
-    answersList,
-    answeredCount,
     hasDiagnostic,
     isMock,
     // Actions
@@ -391,8 +353,6 @@ export const useSessionStore = defineStore('session', () => {
     connectRepository,
     updateReviewedSignals,
     confirmSignals,
-    recordAnswer,
-    skipQuestion,
     generateDiagnosticReport,
     regenerateReport,
     clearError,

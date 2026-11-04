@@ -1,6 +1,4 @@
 export * from './mockSignals'
-export * from './mockQuestions'
 export * from './mockDiagnostic'
-export * from './mockAdvisor'
 export * from './mockNotifications'
 export * from './mockConversation'

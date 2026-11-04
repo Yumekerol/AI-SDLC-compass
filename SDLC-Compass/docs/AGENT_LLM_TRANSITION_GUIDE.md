@@ -23,7 +23,6 @@ flowchart TD
     end
 
     subgraph Providers["Concrete Providers"]
-        MockP["MockLLMProvider\n(Offline Fallback)"]
         OllamaP["OllamaProvider\n(Free Local Llama 3.1)"]
         OpenAIP["OpenAIProvider\n(GPT-4o)"]
         ClaudeP["AnthropicProvider\n(Claude 3.5 Sonnet)"]
@@ -31,7 +30,6 @@ flowchart TD
     end
 
     Specialists --> BaseLLM
-    BaseLLM --> MockP
     BaseLLM --> OllamaP
     BaseLLM --> OpenAIP
     BaseLLM --> ClaudeP
@@ -207,8 +205,8 @@ Best for: Large context window analysis (ingesting entire architecture docs).
    GOOGLE_MODEL=gemini-1.5-pro
    ```
 
-### Provider 5: Mock Provider (Built-in Offline Fallback)
-If no key is present and Ollama is not running, the system automatically falls back to `MockLLMProvider`, guaranteeing that unit tests and CI pipelines never crash.
+### No mock fallback
+If the selected cloud provider has no API key, `get_llm_provider()` raises a configuration error instead of returning fake responses.
 
 ---
 
@@ -250,7 +248,7 @@ asyncio.run(test())
 
 ## 6. Summary: The Step-by-Step Transition Plan
 
-1. **Step 1 (Today):** Use the working prototype with Mock / Ollama locally for frontend development.
+1. **Step 1 (Today):** Use the working prototype with Ollama locally for frontend development.
 2. **Step 2 (When API Keys Arrive):** Add `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` to `.env`.
 3. **Step 3 (Upgrade Prompts):** Update `requirements_agent.py`, `code_agent.py`, `qa_agent.py`, and `devops_agent.py` to call `self.llm.generate_structured()` using the pattern shown in Section 2 above.
 4. **Step 4 (Validation):** Run `py tests/test_api.py` to confirm the 12 lifecycle stages still pass with real LLM generation.

@@ -1,19 +1,13 @@
 import type {
   RepoSignals,
-  Question,
-  UserAnswer,
   DiagnosticReport,
-  AdvisorContext,
   AdvisorMessage,
   ConnectPayload,
   AppNotification
 } from '@/types'
 import {
   mockRepoSignals,
-  mockQuestions,
   mockDiagnosticReport,
-  mockAdvisorContext,
-  mockInitialAdvisorMessages,
   mockNotifications
 } from '@/mocks'
 import * as backendClient from './backendClient'
@@ -38,9 +32,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Local in-memory mock state during session
 let currentSignals: RepoSignals = JSON.parse(JSON.stringify(mockRepoSignals))
-let currentAnswers: UserAnswer[] = []
 let currentDiagnostic: DiagnosticReport = JSON.parse(JSON.stringify(mockDiagnosticReport))
-let currentAdvisorMessages: AdvisorMessage[] = JSON.parse(JSON.stringify(mockInitialAdvisorMessages))
 let currentNotifications: AppNotification[] = JSON.parse(JSON.stringify(mockNotifications))
 
 /**
@@ -167,43 +159,18 @@ export async function confirmSignals(sessionId?: string): Promise<{ success: boo
 }
 
 /**
- * Get context clarification questions
- */
-export async function getQuestions(): Promise<Question[]> {
-  await delay(400)
-  return mockQuestions
-}
-
-/**
- * Submit user answer to a question
- */
-export async function submitAnswer(answer: UserAnswer): Promise<{ success: boolean; nextIndex: number }> {
-  await delay(350)
-  const existingIdx = currentAnswers.findIndex((a) => a.questionId === answer.questionId)
-  if (existingIdx >= 0) {
-    currentAnswers[existingIdx] = answer
-  } else {
-    currentAnswers.push(answer)
-  }
-  return { success: true, nextIndex: currentAnswers.length }
-}
-
-/**
  * Generate diagnostic report.
  * When USE_MOCKS is false, calls continue-diagnostic, gets report JSON, and adapts to 4 domain cards.
  */
 export async function generateDiagnostic(
-  signals: RepoSignals,
-  answers: UserAnswer[],
+  signals: RepoSignals | null,
   sessionId?: string,
   onProgress?: (message: string) => void
 ): Promise<DiagnosticReport> {
-  if (!USE_MOCKS && !(sessionId || signals.sessionId)) {
+  const targetSessionId = sessionId || signals?.sessionId
+  if (!USE_MOCKS) {
     // Never fall through to the sample report in real mode.
-    throw new Error('No active session — connect a repository first.')
-  }
-  if (!USE_MOCKS && (sessionId || signals.sessionId)) {
-    const targetSessionId = sessionId || signals.sessionId!
+    if (!targetSessionId) throw new Error('No active session — connect a repository first.')
     onProgress?.('Synthesizing evidence across all 4 specialist domains...')
     await backendClient.continueDiagnostic(targetSessionId)
 
@@ -215,17 +182,8 @@ export async function generateDiagnostic(
 
   // --- Mock Mode ---
   await delay(1500)
-
-  // Simulation check for AI downtime trigger
-  const hasAiDownTrigger = answers.some((a) => a.answerText.toLowerCase().includes('trigger-ai-error'))
-  if (hasAiDownTrigger) {
-    const error = new Error('AI Diagnostic engine service is temporarily unavailable. Please retry.')
-    ;(error as unknown as { code: string }).code = 'ai_down'
-    throw error
-  }
-
   currentDiagnostic = JSON.parse(JSON.stringify(mockDiagnosticReport))
-  currentDiagnostic.repoName = signals.repoName
+  if (signals) currentDiagnostic.repoName = signals.repoName
   return currentDiagnostic
 }
 
@@ -247,47 +205,19 @@ export async function getExistingDiagnostic(sessionId: string): Promise<Diagnost
  * Regenerate diagnostic report (creating a fresh version)
  */
 export async function regenerateDiagnostic(
-  signals: RepoSignals,
-  answers: UserAnswer[],
+  signals: RepoSignals | null,
   sessionId?: string,
   onProgress?: (message: string) => void
 ): Promise<DiagnosticReport> {
-  return generateDiagnostic(signals, answers, sessionId, onProgress)
+  return generateDiagnostic(signals, sessionId, onProgress)
 }
 
 /**
- * Get Advisor context
- */
-export async function getAdvisorContext(): Promise<AdvisorContext> {
-  await delay(300)
-  return mockAdvisorContext
-}
-
-/**
- * Get Advisor chat messages
- */
-export async function getAdvisorMessages(): Promise<AdvisorMessage[]> {
-  await delay(300)
-  return currentAdvisorMessages
-}
-
-/**
- * Send message to Advisor chat
- * Kept in its own function so it can easily swap to a real endpoint later without touching the view.
+ * Mock-mode advisor reply. In real mode views call
+ * backendClient.sendAdvisorMessage directly.
  */
 export async function sendAdvisorMessage(content: string): Promise<AdvisorMessage> {
   await delay(800)
-
-  const userMsg: AdvisorMessage = {
-    id: `msg-${Date.now()}`,
-    sender: 'user',
-    senderName: 'Team representative',
-    content,
-    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
-  currentAdvisorMessages.push(userMsg)
-
-  // Automated advisor response
   const responseMsg: AdvisorMessage = {
     id: `msg-${Date.now() + 1}`,
     sender: 'advisor',
@@ -296,8 +226,6 @@ export async function sendAdvisorMessage(content: string): Promise<AdvisorMessag
     content: `Understood: "${content}". Based on your 48-file scope and Scrum setup, this refinement aligns with keeping early AI practices bounded and verifiable. We've updated your session context accordingly.`,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
-  currentAdvisorMessages.push(responseMsg)
-
   return responseMsg
 }
 

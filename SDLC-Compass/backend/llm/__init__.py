@@ -10,7 +10,6 @@ from ..config import Settings, settings
 from .anthropic_provider import AnthropicProvider
 from .base_provider import BaseLLMProvider
 from .google_provider import GoogleProvider
-from .mock_provider import MockLLMProvider
 from .ollama_provider import OllamaProvider
 from .openai_provider import OpenAIProvider
 
@@ -20,7 +19,8 @@ logger = logging.getLogger(__name__)
 def get_llm_provider(custom_settings: Settings | None = None) -> BaseLLMProvider:
     """
     Factory to retrieve configured LLM provider.
-    Defaults to Ollama; if Ollama is not configured or fails, falls back gracefully.
+    Defaults to Ollama. A cloud provider without its API key is a
+    configuration error, never a silent fallback to fake responses.
     """
     cfg = custom_settings or settings
     provider_type = cfg.llm_provider.lower() if isinstance(cfg.llm_provider, str) else cfg.llm_provider.value
@@ -34,8 +34,9 @@ def get_llm_provider(custom_settings: Settings | None = None) -> BaseLLMProvider
     elif provider_type == "ollama":
         return OllamaProvider(host=cfg.ollama_host, model=cfg.llm_model)
 
-    # Fallback or default
-    return MockLLMProvider()
+    raise ValueError(
+        f"LLM provider '{provider_type}' is not usable: unknown provider or missing API key."
+    )
 
 
 __all__ = [
@@ -44,6 +45,5 @@ __all__ = [
     "OpenAIProvider",
     "AnthropicProvider",
     "GoogleProvider",
-    "MockLLMProvider",
     "get_llm_provider",
 ]
