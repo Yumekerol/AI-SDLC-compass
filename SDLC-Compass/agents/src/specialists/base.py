@@ -58,6 +58,11 @@ class Finding(BaseModel):
     confidence: Literal["low", "medium", "high"] = "medium"
 
 
+class TeamAnswer(BaseModel):
+    question: str
+    answer: str
+
+
 class Report(BaseModel):
     """What a specialist produces. Built from the accumulated `note()` calls,
     not from the model's final chat message — so how a specialist chooses to
@@ -71,6 +76,9 @@ class Report(BaseModel):
     or not it got a satisfying answer. Feeds the backend's knowledge-gaps
     sidebar: a question the repository itself couldn't answer is exactly
     what that sidebar is for."""
+    team_answers: list[TeamAnswer] = Field(default_factory=list)
+    """The person's replies to those questions, paired with the question.
+    The synthesizer uses these for each recommendation's team_input."""
     summary: str = ""
     status: Literal["complete", "capped"] = "complete"
 

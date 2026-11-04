@@ -28,7 +28,7 @@ from langchain.agents.middleware import ClearToolUsesEdit, ContextEditingMiddlew
 from .config import settings
 from .context import RunContext
 from .persistence import get_checkpointer
-from .specialists.base import Finding, NeedsInput, Report, SpecialistSpec
+from .specialists.base import Finding, NeedsInput, Report, SpecialistSpec, TeamAnswer
 from .tools import build_tools
 
 logger = logging.getLogger(__name__)
@@ -179,6 +179,26 @@ def _extract_questions_asked(messages: list[Any]) -> list[str]:
     return questions
 
 
+def _extract_team_answers(messages: list[Any]) -> list[TeamAnswer]:
+    """Pair each answered ask_user call with the reply the person gave.
+
+    The reply comes back as the ask_user tool result, matched by call id.
+    Questions still pending (no tool result yet) are left out.
+    """
+    asked: dict[str, str] = {}
+    answers: list[TeamAnswer] = []
+    for msg in messages:
+        for call in getattr(msg, "tool_calls", None) or []:
+            if call.get("name") == "ask_user" and call.get("id"):
+                asked[call["id"]] = (call.get("args") or {}).get("question", "")
+        if getattr(msg, "type", None) == "tool":
+            question = asked.get(getattr(msg, "tool_call_id", None))
+            answer = str(msg.content).strip() if msg.content is not None else ""
+            if question and answer:
+                answers.append(TeamAnswer(question=question, answer=answer))
+    return answers
+
+
 def _final_summary(messages: list[Any]) -> str:
     for msg in reversed(messages):
         if getattr(msg, "type", None) == "ai" and msg.content and not (getattr(msg, "tool_calls", None)):
@@ -224,6 +244,7 @@ def _finish(spec: SpecialistSpec, thread_id: str, result: dict[str, Any]) -> Rep
         label=spec.label,
         findings=findings,
         questions_asked=_extract_questions_asked(messages),
+        team_answers=_extract_team_answers(messages),
         summary=summary,
         status=status,
     )

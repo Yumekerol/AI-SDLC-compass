@@ -281,7 +281,9 @@ export function adaptBackendReportToDiagnosticReport(raw: BackendSynthesisOutput
         expectedImpact: tr.item.impact ? capitalize(tr.item.impact.replace('_', ' ')) : '',
         justification: tr.item.description,
         examplePractice: tr.item.ai_relevance || '',
-        quickWin: tr.isQuickWin
+        quickWin: tr.isQuickWin,
+        repositoryEvidence: tr.item.repository_evidence || undefined,
+        teamInput: tr.item.team_input || undefined
       }
     })
 

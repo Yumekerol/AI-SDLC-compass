@@ -274,6 +274,8 @@ export interface BackendRecommendation {
   prerequisites?: string[]
   ai_relevance?: string
   is_foundation?: boolean
+  repository_evidence?: string
+  team_input?: string
 }
 
 export interface BackendRecommendationPhase {

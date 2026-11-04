@@ -54,10 +54,17 @@ def generate_html_report(report_data: dict) -> str:
         recs_list = ""
         for r in recs:
             impact_color = "#EF4444" if r.get("impact") in ("critical", "very_high") else "#3B82F6"
+            evidence_html = "".join(
+                f'<div style="color: #94a3b8; font-size: 0.8rem; margin: 0 0 6px 0;">'
+                f'<strong style="color: #cbd5e1;">{label}:</strong> {r.get(key)}</div>'
+                for key, label in (("repository_evidence", "Repository evidence"), ("team_input", "Team input"))
+                if r.get(key)
+            )
             recs_list += f"""
             <div style="background: #0f172a; border-radius: 6px; padding: 12px; margin-top: 10px; border-left: 4px solid {impact_color};">
                 <div style="font-weight: 600; color: #f8fafc; font-size: 0.95rem;">{r.get('title')}</div>
                 <div style="color: #94a3b8; font-size: 0.85rem; margin: 4px 0 8px 0;">{r.get('description')}</div>
+                {evidence_html}
                 <div style="display: flex; gap: 12px; font-size: 0.75rem; color: #64748b;">
                     <span>Effort: <strong style="color: #cbd5e1;">{r.get('effort')}</strong></span>
                     <span>Impact: <strong style="color: {impact_color};">{r.get('impact', '').upper()}</strong></span>

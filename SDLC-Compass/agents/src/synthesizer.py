@@ -11,7 +11,8 @@ it exactly means neither of those needs to change for this pipeline to work.
 
 from __future__ import annotations
 
-from typing import Literal
+import json
+from typing import Any, Literal
 
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
@@ -46,6 +47,12 @@ class Recommendation(BaseModel):
     prerequisites: list[str] = Field(default_factory=list)
     ai_relevance: str = ""
     is_foundation: bool = False
+    repository_evidence: str = ""
+    """What in the repository backs this recommendation: file paths and the
+    specialist finding they support. Empty only if no finding supports it."""
+    team_input: str = ""
+    """What the team said that bears on this recommendation. Empty when the
+    team said nothing relevant; never invented."""
 
 
 class RecommendationPhase(BaseModel):
@@ -92,6 +99,12 @@ DevOps & Monitoring), each a list of discrete findings with evidence. Your job:
 3. Produce phased_recommendations across exactly three phases — phase_1_foundation (prerequisites that \
    block everything else), phase_2_quick_wins (low-effort, high-impact), phase_3_advanced (deeper AI \
    integration work) — each with concrete recommendations tied back to specific findings.
+4. For every recommendation fill two fields that show why it is there:
+   - repository_evidence: one sentence naming the repository evidence behind it — the file paths \
+     and the specialist finding they support (e.g. "6 test files for 42 source files; \
+     .github/workflows/build.yml has no test step").
+   - team_input: one sentence on what the team said that bears on it, drawn only from the team's \
+     answers and team context below. If the team said nothing relevant, leave it as an empty string.
 
 Do not invent findings the specialists didn't report. If a domain has little evidence, say so plainly \
 in its verdict rather than scoring it as if it were well understood."""
@@ -104,14 +117,18 @@ def _format_reports(reports: list[Report]) -> str:
             f"  - [{f.confidence}] {f.claim} (evidence: {', '.join(f.evidence_paths) or 'none'})"
             for f in report.findings
         ) or "  (no findings recorded)"
+        answers_text = "\n".join(
+            f"  - Q: {a.question}\n    A: {a.answer}" for a in report.team_answers
+        ) or "  (the team was not asked or did not answer)"
         sections.append(
             f"## {report.label} ({report.role})\nStatus: {report.status}\n"
-            f"Summary: {report.summary or '(none)'}\nFindings:\n{findings_text}"
+            f"Summary: {report.summary or '(none)'}\nFindings:\n{findings_text}\n"
+            f"Team answers:\n{answers_text}"
         )
     return "\n\n".join(sections)
 
 
-async def synthesize(reports: list[Report]) -> dict:
+async def synthesize(reports: list[Report], team_context: dict[str, Any] | None = None) -> dict:
     model = ChatOllama(
         model=settings.chat_model,
         base_url=settings.ollama_host,
@@ -124,10 +141,14 @@ async def synthesize(reports: list[Report]) -> dict:
     structured_model = model.with_structured_output(SynthesisOutput)
 
     findings_text = _format_reports(reports)
+    context_text = json.dumps(team_context, default=str) if team_context else "(none provided)"
     result: SynthesisOutput = await structured_model.ainvoke(
         [
             {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
-            {"role": "user", "content": f"Specialist findings:\n\n{findings_text}"},
+            {
+                "role": "user",
+                "content": f"Team context: {context_text}\n\nSpecialist findings:\n\n{findings_text}",
+            },
         ]
     )
 

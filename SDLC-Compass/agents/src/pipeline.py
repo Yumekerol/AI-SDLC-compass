@@ -79,7 +79,7 @@ async def _advance(session_id: str, ctx: RunContext, state: dict[str, Any]) -> P
         pipeline_store.save_state(session_id, state)
         logger.info("Specialist %s finished (%d findings)", spec.label, len(outcome.findings))
 
-    synthesis = await synthesize(completed)
+    synthesis = await synthesize(completed, team_context)
     pipeline_store.delete_state(session_id)
     result = PipelineResult(status="complete", reports=completed, synthesis=synthesis)
     pipeline_store.set_job_status(session_id, "complete", result=result.model_dump(mode="json"))
