@@ -15,6 +15,7 @@ separate one, and only the checkpointer's state actually bridges the two.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -64,21 +65,50 @@ def _make_note_tool(ctx: RunContext):
     return note
 
 
-def _with_cap(base_tool, counter: list[int], cap: int | None):
-    """Wrap a repo tool so that once `cap` calls have been made in this run
-    (seeded from prior history on resume), further calls stop doing real work
-    and instead tell the model to wrap up. No-op when cap is None — the
-    with/without-cap experiment is just this one argument."""
-    if cap is None:
-        return base_tool
+def _with_cap(
+    base_tool,
+    counter: list[int],
+    cap: list[int | None] | int | None,
+    call_history: list[tuple[str, str]] | None = None,
+):
+    """Wrap a repo tool so that:
+    1. Once `cap` calls have been made in this run (seeded from prior history on resume),
+       further calls stop doing real work and tell the model that the call was NOT executed.
+    2. Identical duplicate calls (same tool and exact arguments) are intercepted by a loop breaker
+       without consuming the budget.
+    """
+    cap_holder = cap if isinstance(cap, list) else [cap]
+    history = call_history if call_history is not None else []
 
     def _wrapped(**kwargs: Any) -> str:
-        if counter[0] >= cap:
+        effective_cap = cap_holder[0]
+        if effective_cap is not None and counter[0] >= effective_cap:
             return (
-                f"[tool budget reached: {cap} calls] Stop exploring. Call "
-                "note() for anything you haven't recorded yet, then give a "
-                "brief final summary without calling any more tools."
+                f"[Tool budget reached: limit of {effective_cap} calls reached. The requested action '{base_tool.name}' was NOT executed.]\n"
+                "CRITICAL: Do NOT assume the file or directory does not exist or has no relevant content. "
+                "You were NOT able to inspect it. Do NOT make claims of absence (e.g. 'no files were found in X') "
+                "for paths you could not inspect. Only call note() for findings backed by evidence already in your context, "
+                "then provide a brief final summary without calling any more tools."
             )
+
+        try:
+            call_sig = (base_tool.name, json.dumps(kwargs, sort_keys=True, default=str))
+        except Exception:
+            call_sig = (base_tool.name, str(kwargs))
+
+        if history and history[-1] == call_sig:
+            return (
+                f"[Duplicate tool call detected: you just executed '{base_tool.name}' with these exact arguments "
+                "and already have the complete results in the message above. Do not repeat identical searches or file reads. "
+                "Analyze the output you already received, check a different file or folder, or record your findings using note().]"
+            )
+        if len(history) >= 2 and history[-2] == call_sig and len(set(history[-2:])) == 2:
+            return (
+                f"[Repetitive loop detected: you are alternating repeated calls to '{base_tool.name}'. "
+                "Stop repeating this search. Use the findings already collected, check a different location, or record findings with note().]"
+            )
+
+        history.append(call_sig)
         counter[0] += 1
         return base_tool.invoke(kwargs)
 
@@ -90,9 +120,23 @@ def _with_cap(base_tool, counter: list[int], cap: int | None):
     )
 
 
-def _build_agent(spec: SpecialistSpec, ctx: RunContext, counter: list[int]):
+def _build_agent(
+    spec: SpecialistSpec,
+    ctx: RunContext,
+    counter: list[int],
+    cap_holder: list[int | None] | int | None = None,
+):
+    if cap_holder is None:
+        cap_holder = [spec.max_tool_calls]
+    elif not isinstance(cap_holder, list):
+        cap_holder = [cap_holder]
+
+    call_history: list[tuple[str, str]] = []
     available = build_tools(ctx)
-    repo_tools = [_with_cap(available[name], counter, spec.max_tool_calls) for name in spec.tool_names]
+    repo_tools = [
+        _with_cap(available[name], counter, cap_holder, call_history)
+        for name in spec.tool_names
+    ]
     tools = repo_tools + [_make_note_tool(ctx), ask_user]
 
     model = ChatOllama(
@@ -216,14 +260,20 @@ def _extract_interrupt_question(result: dict[str, Any]) -> str | None:
     return str(payload)
 
 
-def _finish(spec: SpecialistSpec, thread_id: str, result: dict[str, Any]) -> Report | NeedsInput:
+def _finish(
+    spec: SpecialistSpec,
+    thread_id: str,
+    result: dict[str, Any],
+    cap: int | None = None,
+) -> Report | NeedsInput:
     question = _extract_interrupt_question(result)
     if question:
         return NeedsInput(role=spec.role, thread_id=thread_id, question=question)
 
     messages = result.get("messages", [])
     tool_calls_made = _count_tool_calls(messages, spec.tool_names)
-    status = "capped" if spec.max_tool_calls is not None and tool_calls_made >= spec.max_tool_calls else "complete"
+    effective_cap = cap if cap is not None else spec.max_tool_calls
+    status = "capped" if effective_cap is not None and tool_calls_made >= effective_cap else "complete"
     findings = _extract_findings(messages)
     summary = _final_summary(messages)
 
@@ -253,7 +303,9 @@ def _finish(spec: SpecialistSpec, thread_id: str, result: dict[str, Any]) -> Rep
 ASK_NUDGE = (
     "Before you finish: you haven't asked the team anything yet. Call ask_user now with the one "
     "question whose answer would most change your findings: something the repository can't show, "
-    "such as how the team actually works. Use the real ask_user tool call, not text in your reply."
+    "such as how the team actually works. Ground your question in the project's actual nature and scope "
+    "(e.g., do not ask about cloud deployment or incident management if this is a standalone library or tool). "
+    "Use the real ask_user tool call, not text in your reply."
 )
 
 
@@ -283,12 +335,13 @@ async def run_specialist(spec: SpecialistSpec, task: str, ctx: RunContext) -> Re
     """Run one specialist from a fresh thread until it finishes or pauses on ask_user."""
     thread_id = f"{spec.role}:{id(ctx)}:{ctx.root.name}"
     counter = [0]
-    agent = _build_agent(spec, ctx, counter)
+    cap_holder = [spec.max_tool_calls]
+    agent = _build_agent(spec, ctx, counter, cap_holder)
     config = {"configurable": {"thread_id": thread_id}}
 
     result = await agent.ainvoke({"messages": [{"role": "user", "content": task}]}, config=config)
     result = await _nudge_if_silent(spec, agent, config, result)
-    return _finish(spec, thread_id, result)
+    return _finish(spec, thread_id, result, cap=cap_holder[0])
 
 
 async def resume_specialist(spec: SpecialistSpec, thread_id: str, answer: str, ctx: RunContext) -> Report | NeedsInput:
@@ -296,15 +349,19 @@ async def resume_specialist(spec: SpecialistSpec, thread_id: str, answer: str, c
 
     This typically runs in a separate HTTP request from the one that paused
     it, so the tool-call counter is re-seeded from the checkpointed history
-    rather than assumed to be zero.
+    rather than assumed to be zero. A dedicated follow-up budget is allocated
+    so the specialist can inspect paths or answers provided by the user.
     """
     counter = [0]
-    agent = _build_agent(spec, ctx, counter)
+    cap_holder = [None]
+    agent = _build_agent(spec, ctx, counter, cap_holder)
     config = {"configurable": {"thread_id": thread_id}}
 
     prior_state = await agent.aget_state(config)
     prior_messages = prior_state.values.get("messages", []) if prior_state and prior_state.values else []
-    counter[0] = _count_tool_calls(prior_messages, spec.tool_names)
+    prior_count = _count_tool_calls(prior_messages, spec.tool_names)
+    counter[0] = prior_count
+    cap_holder[0] = prior_count + settings.specialist_resume_budget
 
     # The model can call ask_user several times in one step (parallel tool
     # calls), leaving several interrupts pending, and a bare Command(resume=...)
@@ -316,4 +373,4 @@ async def resume_specialist(spec: SpecialistSpec, thread_id: str, answer: str, c
 
     result = await agent.ainvoke(Command(resume=resume), config=config)
     result = await _nudge_if_silent(spec, agent, config, result)
-    return _finish(spec, thread_id, result)
+    return _finish(spec, thread_id, result, cap=cap_holder[0])

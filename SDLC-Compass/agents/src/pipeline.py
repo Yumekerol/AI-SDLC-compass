@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from . import pipeline_store
 from .context import RunContext
+from .profiler import profile_repository
 from .runner import resume_specialist, run_specialist
 from .specialists import PIPELINE_ORDER, SPECS_BY_ROLE
 from .specialists.base import NeedsInput, Report
@@ -40,12 +41,28 @@ class PipelineResult(BaseModel):
     question: str | None = None
     reports: list[Report] | None = None
     synthesis: dict[str, Any] | None = None
+    project_profile: dict[str, Any] | None = None
 
 
-def _task_for(spec, team_context: dict[str, Any]) -> str:
+def _task_for(
+    spec,
+    team_context: dict[str, Any],
+    profile: dict[str, Any] | None = None,
+) -> str:
+    profile_text = ""
+    if profile:
+        profile_text = (
+            "\nProject Profile & Scope:\n"
+            f"- Project Type: {profile.get('project_type')}\n"
+            f"- Summary: {profile.get('summary')}\n"
+            f"- Distribution Target: {profile.get('distribution_target')}\n"
+            f"- Operational Scope: {profile.get('operational_scope')}\n"
+            f"- Deployed Service: {'Yes' if profile.get('has_deployment_target') else 'No (Library / Utility / Prototype)'}\n"
+        )
     return (
-        f"Assess the {spec.label} domain of this repository for AI-SDLC "
-        "readiness. Known team context so far (may be partial or empty): "
+        f"Assess the {spec.label} domain of this repository for AI-SDLC readiness."
+        f"{profile_text}\n"
+        f"Known team context so far (may be partial or empty): "
         f"{json.dumps(team_context, default=str)}"
     )
 
@@ -53,6 +70,7 @@ def _task_for(spec, team_context: dict[str, Any]) -> str:
 async def _advance(session_id: str, ctx: RunContext, state: dict[str, Any]) -> PipelineResult:
     """Run specialists starting at state['current_index'] until one pauses or all finish."""
     team_context = state.get("team_context", {})
+    profile = state.get("project_profile")
     completed: list[Report] = [Report.model_validate(r) for r in state.get("completed_reports", [])]
 
     for index in range(state["current_index"], len(PIPELINE_ORDER)):
@@ -64,13 +82,18 @@ async def _advance(session_id: str, ctx: RunContext, state: dict[str, Any]) -> P
         pipeline_store.save_state(session_id, state)
 
         logger.info("Running specialist %d/%d: %s", index + 1, len(PIPELINE_ORDER), spec.label)
-        outcome = await run_specialist(spec, _task_for(spec, team_context), ctx)
+        outcome = await run_specialist(spec, _task_for(spec, team_context, profile), ctx)
 
         if isinstance(outcome, NeedsInput):
             state["paused"] = outcome.model_dump(mode="json")
             pipeline_store.save_state(session_id, state)
 
-            result = PipelineResult(status="needs_input", role=outcome.role, question=outcome.question)
+            result = PipelineResult(
+                status="needs_input",
+                role=outcome.role,
+                question=outcome.question,
+                project_profile=profile,
+            )
             pipeline_store.set_job_status(session_id, "needs_input", result=result.model_dump(mode="json"))
             return result
 
@@ -81,7 +104,12 @@ async def _advance(session_id: str, ctx: RunContext, state: dict[str, Any]) -> P
 
     synthesis = await synthesize(completed, team_context)
     pipeline_store.delete_state(session_id)
-    result = PipelineResult(status="complete", reports=completed, synthesis=synthesis)
+    result = PipelineResult(
+        status="complete",
+        reports=completed,
+        synthesis=synthesis,
+        project_profile=profile,
+    )
     pipeline_store.set_job_status(session_id, "complete", result=result.model_dump(mode="json"))
     return result
 
@@ -94,6 +122,10 @@ async def run_pipeline(
 ) -> PipelineResult:
     pipeline_store.set_job_status(session_id, "running")
     ctx = RunContext(root=Path(repo_path), scan_output=scan_output or {})
+
+    logger.info("Profiling repository for session %s...", session_id)
+    profile = await profile_repository(ctx)
+
     state = {
         "current_index": 0,
         "completed_reports": [],
@@ -101,6 +133,7 @@ async def run_pipeline(
         "repo_path": str(ctx.root),
         "team_context": team_context,
         "scan_output": scan_output or {},
+        "project_profile": profile.model_dump(mode="json"),
     }
     pipeline_store.save_state(session_id, state)
 
@@ -133,7 +166,12 @@ async def resume_pipeline(session_id: str, answer: str) -> PipelineResult:
     if isinstance(outcome, NeedsInput):
         state["paused"] = outcome.model_dump(mode="json")
         pipeline_store.save_state(session_id, state)
-        result = PipelineResult(status="needs_input", role=outcome.role, question=outcome.question)
+        result = PipelineResult(
+            status="needs_input",
+            role=outcome.role,
+            question=outcome.question,
+            project_profile=state.get("project_profile"),
+        )
         pipeline_store.set_job_status(session_id, "needs_input", result=result.model_dump(mode="json"))
         return result
 

@@ -20,10 +20,9 @@ don't re-derive it. Use `read_file`/`list_files`/`directory_tree`/`grep_search`
 to confirm specific claims with real evidence; every `note()` needs a file path
 behind it, not a guess.
 
-If something about the team's actual QA process (who owns testing, how
-regression is handled, what's considered "critical" and untested) isn't
-visible in the repository, use `ask_user` to ask them directly. One clear
-question at a time, only when you need it.
+Always ground your assessment in the Project Profile & Scope provided in your task:
+- Calibrate testing expectations to the project type (e.g., focus on unit tests, mock coverage, and compatibility matrix testing for libraries; focus on integration, e2e, and contract tests for deployed services).
+- If something about the team's actual QA process (who owns testing, how regression is handled, what's considered "critical" and untested) isn't visible in the repository, use `ask_user` to ask them directly within the context of their project scope. One clear question at a time, only when you need it.
 
 When you're done, you should have called `note()` for each real finding. Keep
 your final message short — it is not what gets reported; your `note()` calls

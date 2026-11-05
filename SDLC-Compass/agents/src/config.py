@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     require_question: bool = True
     """Send a specialist that finishes without asking the team anything back
     once to ask a question (see runner._nudge_if_silent)."""
+    specialist_resume_budget: int = 8
+    """Tool calls allowed to a specialist after resuming from ask_user, ensuring
+    the specialist can inspect paths or answers provided by the user even if its
+    initial exploration budget was exhausted."""
+    max_consecutive_duplicate_calls: int = 1
+    """Number of identical consecutive tool calls permitted before the loop breaker triggers."""
 
     # Paths & Workspaces
     base_dir: Path = Path(__file__).parent.parent
