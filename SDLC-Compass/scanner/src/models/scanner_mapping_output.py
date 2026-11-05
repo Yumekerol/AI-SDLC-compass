@@ -15,10 +15,16 @@ Para adicionar um cartão: copiar `map_languages`, trocar a chave de metrics e o
 modelo `*Data`, e registar a função em MAPPERS / build_scanner_output.
 """
 
+#Nível	Quando
+#HIGH	Observação direta e determinística do que o cartão afirma, e dados completos (sem histórico parcial nem filtros que escondam o que interessa).
+#MEDIUM	Heurística por nome, caminho ou palavra-chave, ou “declarado” em vez de “usado”.
+#LOW	Coletor indisponível, amostra pequena ou ausência de dados que impeça concluir.
+
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
+
 from ..config import settings
 from urllib.parse import urlparse
 
@@ -26,6 +32,7 @@ from ..models.scanner_output import (
     ConfidenceLevel,
     LanguageBreakdown,
     LanguagesData,
+    MostLocFile,
     SizeAndStructureData,
     StackAndToolingData,
     CICDAndOperationsData,
@@ -49,6 +56,8 @@ from ..models.scanner_output import (
 
 Metrics = dict[str, Any]
 
+MEDIUM_COMMITS_FOR_HISTORY = 100
+MIN_COMMITS_FOR_HISTORY = 30
 
 # ---------------------------------------------------------------------------
 # Helpers comuns
@@ -76,6 +85,11 @@ def _not_implemented(card: str) -> Callable[[Metrics], SignalGroup]:
     def mapper(metrics: Metrics) -> SignalGroup:
         return _unavailable(f"{card}: mapper not implemented yet")
     return mapper
+
+
+def _source(method: str, *caveats: str | None) -> str:
+    """método; limitação; limitação... (ignora None e strings vazias)."""
+    return "; ".join([method, *[c for c in caveats if c]])
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +128,21 @@ def map_languages(metrics: Metrics) -> SignalGroup:
         breakdown=breakdown,
     )
 
+    extensions = sorted({
+        PurePosixPath(path).suffix.lower()
+        for path in paths
+        if PurePosixPath(path).suffix
+    })
+
+    confidence_source = _source(
+        f"File extension mapping ({', '.join(extensions)})"
+        if extensions
+        else "File extension mapping (no extensions found)"
+    )
+
     return SignalGroup(
         confidence=ConfidenceLevel.HIGH if breakdown else ConfidenceLevel.LOW,
-        confidence_source="File extension mapping (.py, .js, .jsx, .ts, .tsx, .java)",
+        confidence_source=confidence_source,
         data=data.model_dump(),
         evidence_paths=paths,
     )
@@ -129,7 +155,7 @@ def map_languages(metrics: Metrics) -> SignalGroup:
 # code_files            size_and_structure.code_files
 # total_files           size_and_structure.total_files
 # loc_estimate          size_and_structure.loc_estimate
-# module_estimate       size_and_structure.module_estimate
+# directory_estimate    size_and_structure.directory_estimate
 # avg_file_size_loc     size_and_structure.avg_file_size_loc  (None -> 0.0)
 # ---------------------------------------------------------------------------
 
@@ -140,15 +166,16 @@ def map_size_and_structure(metrics: Metrics) -> SignalGroup:
 
     data = SizeAndStructureData(
         code_files=raw.get("code_files", 0),
-        total_files=raw.get("total_files", 0),
+        total_analyzed_files=raw.get("total_analyzed_files", 0),
         loc_estimate=raw.get("loc_estimate", 0),
-        module_estimate=raw.get("module_estimate", 0),
+        directory_estimate=raw.get("directory_estimate", 0),
         avg_file_size_loc=raw.get("avg_file_size_loc") or 0.0,
+        most_loc_files=[MostLocFile(**file) for file in raw.get("most_loc_files", [])]
     )
 
     return SignalGroup(
-        confidence=ConfidenceLevel.ESTIMATED,
-        confidence_source="File counts after Settings filters; LOC and modules are heuristics",
+        confidence=ConfidenceLevel.MEDIUM if data.code_files > 0 else ConfidenceLevel.LOW,
+        confidence_source="File counts after Settings filters; LOC and directories are heuristics",
         data=data.model_dump(),
     )
 
@@ -290,11 +317,14 @@ def map_stack_and_tooling(metrics: Metrics) -> SignalGroup:
         package_managers=sorted(package_managers),
     )
 
+    deps_parsed = sum(len(m.get("dependencies", [])) for m in manifests)
+
     return SignalGroup(
-        confidence=ConfidenceLevel.ESTIMATED if manifests else ConfidenceLevel.LOW,
-        confidence_source=(
-            "Declared dependencies and manifest/lockfile names matched against known tools; "
-            "declared is not necessarily used"
+        confidence=ConfidenceLevel.MEDIUM if deps_parsed else ConfidenceLevel.LOW,
+        confidence_source=_source(
+            "Declared dependencies and manifest/lockfile names matched against known tools",
+            "declared is not necessarily used",
+            None if deps_parsed else "manifests found but no dependencies parsed",
         ),
         data=data.model_dump(),
         evidence_paths=sorted(set(evidence)),
@@ -388,6 +418,7 @@ def map_cicd_and_operations(metrics: Metrics) -> SignalGroup:
     dockerfile_paths: list[str] = infra.get("dockerfile_paths", [])
     iac_tools: list[str] = infra.get("iac_tools", [])
     iac_files = [f for files in infra.get("iac_files_by_tool", {}).values() for f in files]
+    iac_tools_counts_by_tool = {t: len(f) for t, f in sorted(infra.get("iac_files_by_tool", {}).items())}
 
     # --- Monitorização ---
     monitoring: set[str] = set()
@@ -405,24 +436,41 @@ def map_cicd_and_operations(metrics: Metrics) -> SignalGroup:
         dockerfile_path=dockerfile_paths[0] if dockerfile_paths else None,
         has_documentation=has_docs,
         documentation_notes=docs_notes,
-        has_test_step_in_ci=bool(ci.get("ci_has_test_step", False)),
-        has_deploy_step_in_ci=bool(ci.get("ci_has_deploy_step", False)),
+        build_task_files=sorted(ci.get("build_task_files", [])),
+        has_test_step_in_ci=bool(ci.get("has_test_step_in_ci", False)),
+        has_deploy_step_in_ci=bool(ci.get("has_deploy_step_in_ci", False)),
         has_monitoring_config=bool(monitoring),
         monitoring_tools=sorted(monitoring),
         has_iac=bool(iac_tools),
+        iac_tools_counts_by_tool=iac_tools_counts_by_tool,
         iac_tools=iac_tools,
     )
 
-    evidence = [f for files in by_system.values() for f in files] + container_files + iac_files
+    test_step_evidence = ci.get("test_step_evidence", [])
+    deploy_step_evidence = ci.get("deploy_step_evidence", [])
+
+    evidence = {
+        "ci_config_files": sorted(f for files in by_system.values() for f in files),
+        "container_files": sorted(container_files),
+        "iac_files": sorted(iac_files),
+        "test_steps": test_step_evidence,
+        "deploy_steps": deploy_step_evidence,
+    }
+    # remove categorias vazias para poupar tokens
+    evidence = {k: v for k, v in evidence.items() if v}
+
+    confidence = ConfidenceLevel.MEDIUM if systems else ConfidenceLevel.LOW
 
     return SignalGroup(
-        confidence=ConfidenceLevel.ESTIMATED,
-        confidence_source=(
-            "CI/infra detected by file name/path; CI steps by keyword search; "
-            "monitoring from declared dependencies; presence is not execution"
+        confidence=confidence,
+        confidence_source=_source(
+            "CI config files found by file name/path; test/deploy steps by keyword search",
+            "presence is not execution"
+            if systems else
+            "No CI config file found (CI may exist in an unsupported system or outside the repo)"
         ),
         data=data.model_dump(),
-        evidence_paths=sorted(set(evidence)),
+        evidence_paths=evidence,
     )
 
 
@@ -474,6 +522,7 @@ def map_quality_indicators(metrics: Metrics) -> SignalGroup:
         return _unavailable("Test and CI collectors unavailable",
                             QualityIndicatorsData().model_dump())
 
+    tests_raw, ci_raw = tests, ci
     tests, ci = tests or {}, ci or {}
 
     style_tools: set[str] = set()
@@ -489,28 +538,43 @@ def map_quality_indicators(metrics: Metrics) -> SignalGroup:
             coverage_tools.add(tool)
             evidence.append(f)
 
-    notes = (
+    """ notes = (
         "Coverage tooling configured (" + ", ".join(sorted(coverage_tools))
         + "); coverage value not measured; quality gate not detected"
         if coverage_tools else None
-    )
+    ) """
+
+    test_files_by_type = tests.get("test_files_by_type", {})
 
     data = QualityIndicatorsData(
         test_to_code_file_ratio=tests.get("test_to_code_file_ratio"),
         test_file_count=tests.get("test_files_count", 0),
-        source_file_count=tests.get("source_file_count", 0),
-        executed_coverage=None,             # não medido
-        has_quality_gate=True if coverage_tools else False,
-        quality_gate_notes=notes,
+        test_config_files_count=tests.get("test_config_files_count", 0),
+        source_file_count=tests.get("code_files_non_test_count", 0),
+        #executed_coverage=None,             # não medido
+        #has_quality_gate=True if coverage_tools else False,
+        #quality_gate_notes=notes,
+        coverage_tools=sorted(coverage_tools),
         has_code_style_config=bool(style_tools),
         code_style_tools=sorted(style_tools),
+        test_files_by_type=dict(test_files_by_type),
+        test_files=tests.get("test_files", [])  # file -> type
     )
 
+    has_code = bool(tests.get("code_files_non_test_count"))
+    confidence = ConfidenceLevel.MEDIUM if (tests_raw is not None and has_code) else ConfidenceLevel.LOW
+    if ci_raw is None and confidence is ConfidenceLevel.MEDIUM:
+        confidence = ConfidenceLevel.LOW
+
     return SignalGroup(
-        confidence=ConfidenceLevel.ESTIMATED,
-        confidence_source=(
-            "Test files by name/path; style and coverage tooling by config file names; "
-            "coverage not measured; quality gate not assessed"
+        confidence=confidence,
+        confidence_source=_source(
+            "Test files by name/path (everything under test folders counts as tests)",
+            "style and coverage tooling by config file names",
+            "coverage values and thresholds not measured",
+            "tooling configured in pyproject.toml/pom.xml/package.json is not seen",
+            "CI collector unavailable" if ci is None else None,
+            "test collector unavailable" if tests is None else None,
         ),
         data=data.model_dump(),
         evidence_paths=sorted(set(evidence)),
@@ -562,11 +626,15 @@ def map_technical_debt(metrics: Metrics) -> SignalGroup:
 
     evidence = {h.file for h in top_files} | {o.file for o in occurrences}
 
+    size = _section(metrics, "size_and_structure") or {}
+    confidence = ConfidenceLevel.MEDIUM if size.get("code_files", 0) > 0 else ConfidenceLevel.LOW
+
     return SignalGroup(
-        confidence=ConfidenceLevel.ESTIMATED,
-        confidence_source=(
-            "Case-sensitive count of TODO/FIXME/HACK/XXX/WORKAROUND in text files; "
-            "a proxy for technical debt, not a complete measure"
+        confidence=confidence,
+        confidence_source=_source(
+            "Case-sensitive count of TODO/FIXME/HACK/XXX/WORKAROUND in text files",
+            "a proxy for technical debt, not a complete measure",
+            f"occurrence list truncated (counts are complete)" if data.occurrences_truncated else None,
         ),
         data=data.model_dump(),
         evidence_paths=sorted(evidence),
@@ -635,11 +703,12 @@ def map_documentation(metrics: Metrics) -> SignalGroup:
         f.file for f in files if any(c in _KEY_DOC_CATEGORIES for c in f.categories)
     )[:50]
 
+    confidence = ConfidenceLevel.MEDIUM if data.documentation_files_count > 0 else ConfidenceLevel.LOW
+
     return SignalGroup(
-        confidence=ConfidenceLevel.ESTIMATED,
-        confidence_source=(
-            "Documentation files by name/extension/directory; change frequency from the "
-            "analyzed commit history; existence does not imply the docs are current or useful"
+        confidence=confidence,
+        confidence_source=_source(
+            "Documentation files by name/extension/directory; change frequency from the analyzed commit history; existence does not imply the docs are current or useful"
         ),
         data=data.model_dump(),
         evidence_paths=evidence,
@@ -666,6 +735,7 @@ MAX_EVIDENCE_RETURNED = 100      # o coletor guarda até 200; para a UI chegam o
 def _commit_evidence(items: list[dict[str, Any]]) -> list[CommitEvidence]:
     return [
         CommitEvidence(
+            sha=item.get("sha"),
             date=item["date"],
             message=item["message"],
             matched_term=item.get("matched_term"),
@@ -711,13 +781,21 @@ def map_fixes_and_reverts(metrics: Metrics) -> SignalGroup:
 
     window = metrics.get("history_window") or {}
     repo = _section(metrics, "repository") or {}
-    partial = window.get("truncated_by_max_commits") or repo.get("is_shallow_clone")
+    #partial = window.get("truncated_by_max_commits") or repo.get("is_shallow_clone")
+    is_trunc = window.get("truncated_by_max_commits")
+    is_shallow = repo.get("is_shallow_clone")
+    commits = data.commits_analyzed
+
+    confidence = ConfidenceLevel.HIGH if data.commits_analyzed > MEDIUM_COMMITS_FOR_HISTORY and not is_trunc and not is_shallow else ConfidenceLevel.MEDIUM if data.commits_analyzed > MIN_COMMITS_FOR_HISTORY else ConfidenceLevel.LOW
 
     return SignalGroup(
-        confidence=ConfidenceLevel.ESTIMATED,
-        confidence_source=(
-            "Commit subjects matched against fix/revert keywords; heuristic, not a bug tracker"
-            + ("; history is partial (shallow clone or max-commits limit)" if partial else "")
+        confidence=confidence,
+        confidence_source=_source(
+            "Commit subjects matched against fix/revert keywords",
+            "heuristic: depends on commit message conventions, not a bug tracker",
+            f"only {commits} commits analyzed" if commits < MIN_COMMITS_FOR_HISTORY else None,
+            "shallow clone: history is partial" if is_shallow else None,
+            f"limited to the {commits} most recent commits" if is_trunc else None,
         ),
         data=data.model_dump(),
         evidence_paths=[],     # commits não têm caminhos de ficheiros
@@ -738,6 +816,7 @@ def map_fixes_and_reverts(metrics: Metrics) -> SignalGroup:
 
 def map_file_churn(metrics: Metrics) -> SignalGroup:
     raw = _section(metrics, "file_churn")
+    history = _section(metrics, "fixes_and_reverts")
     if raw is None:
         return _unavailable("File churn collector unavailable", FileChurnData().model_dump())
 
@@ -773,10 +852,14 @@ def map_file_churn(metrics: Metrics) -> SignalGroup:
             data=data.model_dump(),
         )
 
+    commit_count = history.get("commits_analyzed", 0) if history else 0
+
     return SignalGroup(
-        confidence=ConfidenceLevel.ESTIMATED,
-        confidence_source=(
-            "Lines added+deleted per file from git numstat over the analyzed commits; "
+        confidence=ConfidenceLevel.HIGH if commit_count > MEDIUM_COMMITS_FOR_HISTORY else ConfidenceLevel.MEDIUM if commit_count > MIN_COMMITS_FOR_HISTORY else ConfidenceLevel.LOW,
+        confidence_source=_source(
+            "Lines added+deleted per file from git numstat over the analyzed commits",
+            "excludes files filtered by Settings and generated files",
+            f"only {commit_count} commits analyzed" if commit_count < MIN_COMMITS_FOR_HISTORY else None,
         ),
         data=data.model_dump(),
         evidence_paths=sorted(f.file for f in top_files),
@@ -837,7 +920,7 @@ def map_scope(metrics: Metrics) -> ScopeAssessment:
 
     return ScopeAssessment(
         eligible_for_poc=supported > 0,
-        supported_code_files=supported,
+        #supported_code_files=supported,
         excluded_items=excluded_items,
         exclusion_rules=settings.excluded_extensions + settings.excluded_dirs,
         scope_warnings=warnings,

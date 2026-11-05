@@ -48,13 +48,18 @@ class LanguagesData(BaseModel):
 
 # ─── Signal Group 2: Size & Structure ─────────────────────────────────
 
+class MostLocFile(BaseModel):
+    path: str
+    loc: int
+
 class SizeAndStructureData(BaseModel):
     """Repository size, structure, and complexity estimates."""
     code_files: int = 0
-    total_files: int = 0
+    total_analyzed_files: int = 0
     loc_estimate: int = 0
-    module_estimate: int = 0
+    directory_estimate: int = 0
     avg_file_size_loc: float = 0.0
+    most_loc_files: list[MostLocFile] = Field(default_factory=list)
 
 
 # ─── Signal Group 3: Stack & Tooling ──────────────────────────────────
@@ -80,11 +85,13 @@ class CICDAndOperationsData(BaseModel):
     dockerfile_path: str | None = None
     has_documentation: bool = False
     documentation_notes: str | None = None
+    build_task_files: list[str] = Field(default_factory=list)
     has_test_step_in_ci: bool = False
     has_deploy_step_in_ci: bool = False
     has_monitoring_config: bool = False
     monitoring_tools: list[str] = Field(default_factory=list)
     has_iac: bool = False
+    iac_tools_counts_by_tool: dict[str, int] = Field(default_factory=dict)
     iac_tools: list[str] = Field(default_factory=list)
 
 
@@ -94,12 +101,16 @@ class QualityIndicatorsData(BaseModel):
     """Testing and code quality proxy signals."""
     test_to_code_file_ratio: float | None = None
     test_file_count: int = 0
+    test_config_files_count: int = 0
     source_file_count: int = 0
     #executed_coverage: float | None = None  # null = not measured ISTO È MM FKED DE MEDIR, OU TERIA DE LER O REPO COMPLETO PARA CALCULAR ISTO, O QUE É MUITO PESADO
-    has_quality_gate: bool = False          # OU TERIA DE FZR UNS PARSERS TODOS ESTRANHOS COM CERTAS LIBS, 
-    quality_gate_notes: str | None = None
+    #has_quality_gate: bool = False          # OU TERIA DE FZR UNS PARSERS TODOS ESTRANHOS COM CERTAS LIBS, 
+    #quality_gate_notes: str | None = None
+    coverage_tools: list[str] = Field(default_factory=list)   # ex.: ["Codecov"]
     has_code_style_config: bool = False
     code_style_tools: list[str] = Field(default_factory=list)
+    test_files_by_type: dict[str, int] = Field(default_factory=dict)
+    test_files: list[dict[str, str]] = Field(default_factory=list)  # file -> type
 
 
 # ─── Signal Group 6: Technical Debt ──────────────────────────────────
@@ -168,6 +179,7 @@ class DocumentationData(BaseModel):
 
 class CommitEvidence(BaseModel):
     """Um commit usado como evidência (sem sha nem autor, por desenho do coletor)."""
+    sha: str | None = None
     date: str                                   # ISO 8601
     message: str
     matched_term: str | None = None             # só nas correções (fix, bug, hotfix…)
@@ -221,7 +233,7 @@ class SignalGroup(BaseModel):
     confidence: ConfidenceLevel = ConfidenceLevel.LOW
     confidence_source: str = ""
     data: dict = Field(default_factory=dict)
-    evidence_paths: list[str] = Field(default_factory=list)
+    evidence_paths: list[str] | dict[str, list[str]] = Field(default_factory=list)
     #user_edited: bool = False
 
 
@@ -240,7 +252,7 @@ class RepositoryInfo(BaseModel):
 class ScopeAssessment(BaseModel):
     """PoC eligibility and scope information."""
     eligible_for_poc: bool = True
-    supported_code_files: int = 0
+    #supported_code_files: int = 0
     excluded_items: int = 0
     exclusion_rules: list[str] = Field(default_factory=list)
     scope_warnings: list[str] = Field(default_factory=list)

@@ -14,7 +14,7 @@ from ..models.constraint_output import Result
 from ..models.zip_result import ZipResult
 from ..models.clone_result import CloneResult
 
-from ..core.metrics import collect_all_metrics
+from ..analyzers.metrics import collect_all_metrics
 
 from ..config import settings
 from ..models.scanner_mapping_output import build_scanner_output

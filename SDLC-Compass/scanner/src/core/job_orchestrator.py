@@ -22,7 +22,7 @@ from ..aquisition.git_aquisition import aquire_and_validate_repository
 
 from ..config import settings
 
-from .metrics import collect_all_metrics
+from ..analyzers.metrics import collect_all_metrics
 
 logger = logging.getLogger(__name__)
 
