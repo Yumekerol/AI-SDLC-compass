@@ -41,7 +41,7 @@ def collect_fixes_and_reverts(
             fixes_by_month[commit.month] += 1
             if len(fix_evidence) < MAX_LISTED_ITEMS:
                 fix_evidence.append({
-                    #"sha": commit.sha, 
+                    "sha": commit.sha, 
                     "date": commit.date,
                     "message": _truncate(commit.subject),
                     "matched_term": fix_match.group(0).lower(),
@@ -51,7 +51,7 @@ def collect_fixes_and_reverts(
             reverts_by_month[commit.month] += 1
             if len(revert_evidence) < MAX_LISTED_ITEMS:
                 revert_evidence.append({
-                    #"sha": commit.sha, 
+                    "sha": commit.sha, 
                     "date": commit.date,
                     "message": _truncate(commit.subject),
                     "matched_term": revert_match.group(0).lower() if (revert_match := REVERT_SUBJECT_RE.search(commit.subject)) else None,

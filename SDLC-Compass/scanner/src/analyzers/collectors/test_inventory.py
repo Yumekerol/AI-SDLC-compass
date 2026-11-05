@@ -7,7 +7,10 @@ from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .__common__ import _resolve_files, _relative_path, LANGUAGE_BY_EXTENSION, MAX_LISTED_ITEMS, _is_test_file
+from .__common__ import (
+    _resolve_files, _relative_path, LANGUAGE_BY_EXTENSION, MAX_LISTED_ITEMS,
+    _is_test_file, _is_test_config_file, TEST_CONFIG_FRAMEWORK,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +19,7 @@ NON_CODE_EXTENSIONS = {".md", ".json", ".yaml", ".yml", ".toml", ".xml", ".html"
 
 E2E_DIR_MARKERS = {"e2e", "end-to-end", "end_to_end", "cypress", "playwright", "selenium",
                    "puppeteer", "acceptance"}
-INTEGRATION_DIR_MARKERS = {"integration", "integrations", "integration_tests", "integration-tests",
+INTEGRATION_DIR_MARKERS = {"Integration", "integration", "integrations", "integration_tests", "integration-tests",
                            "itests"}
 UNIT_DIR_MARKERS = {"unit", "units", "unit_tests", "unit-tests"}
 
@@ -55,8 +58,8 @@ def _classify_test_type(relative: str) -> str:
 
     # Integration
     integration_patterns = [
+        r"integration",
         r"(^|[._-])integration([._-]|$)",
-        r"(^|[._-])int([._-]|$)",
         r"(^|[._-])it_test([._-]|$)",
     ]
 
@@ -78,7 +81,11 @@ def _classify_test_type(relative: str) -> str:
     ):
         return "unit"
 
-    return "unclassified"
+    # Common unit test naming conventions (.spec.ts, .test.ts, etc.)
+    if re.search(r"\.(spec|test)\.[^.]+$", name):
+        return "unit"
+
+    return "unit_or_unspecified"  # Default to unit if no other classification matches
 
 
 def collect_test_inventory(
@@ -92,13 +99,22 @@ def collect_test_inventory(
         relative = _relative_path(repo_path, path)
         suffix = path.suffix.lower()
 
-        # Detectar configurações de frameworks
+        # Configs de frameworks: registar e NÃO contar como teste nem como código
+        is_config = False
         for pattern, framework in TEST_CONFIG_PATTERNS:
             if pattern.match(path.name):
                 configs.append({"file": relative, "framework": framework})
+                is_config = True
                 break
 
-        # Considerar apenas ficheiros de código no inventário
+        if not is_config and _is_test_config_file(relative):
+            key = path.name.lower().split(".")[0].split("-")[0]
+            configs.append({"file": relative, "framework": TEST_CONFIG_FRAMEWORK.get(key, key)})
+            is_config = True
+
+        if is_config:
+            continue   # NOVO: sai do ciclo, não vai para tests nem para o denominador
+
         if suffix not in LANGUAGE_BY_EXTENSION:
             continue
 
@@ -115,6 +131,7 @@ def collect_test_inventory(
         "test_files_by_type": dict(by_type),
         "test_files": [{"file": f, "type": t} for f, t in ordered[:MAX_LISTED_ITEMS]],
         "test_files_truncated": len(ordered) > MAX_LISTED_ITEMS,
+        "test_config_files_count": len(configs),
         "test_framework_configs": sorted(configs, key=lambda c: c["file"]),
         "test_to_code_file_ratio": (
             round(len(tests) / code_files_non_test, 4) if code_files_non_test else None
@@ -122,6 +139,8 @@ def collect_test_inventory(
         "limitations": (
             "Inventário por nomes/diretórios; o tipo (unit/integration/e2e) é aproximado e "
             "'unclassified' não é assumido como unitário. Não mede cobertura nem qualidade, "
-            "nem garante que os testes executem."
+            "nem garante que os testes executem. O rácio ficheiros de teste / ficheiros de "
+            "código conta todo o código fora de pastas de teste (incluindo exemplos e demos) "
+            "como código de produção; em repos com muitos exemplos o valor pode estar subestimado."
         ),
     }

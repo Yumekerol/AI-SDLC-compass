@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 
-from .__common__ import CommitRecord, _resolve_files, _relative_path, _ensure_history, MAX_LISTED_ITEMS, TOP_N_DEFAULT
+from .__common__ import CommitRecord, _resolve_files, _relative_path, _ensure_history, MAX_LISTED_ITEMS, TOP_N_DEFAULT, get_current_files
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +105,13 @@ def collect_documentation_inventory(
                 last_change.setdefault(path, commit.date[:10])
         commits_touching_docs += touched
 
+    current_files = get_current_files(repo_path)
+
+    ranked = sorted(
+        ((f, n) for f, n in changes.items() if f in current_files),
+        key=lambda kv: (-kv[1], kv[0]),
+    )[:TOP_N_DEFAULT]
+
     return {
         "documentation_files_count": len(docs),
         "files_by_category": dict(by_category.most_common()),
@@ -117,7 +124,7 @@ def collect_documentation_inventory(
             "share_of_commits": round(commits_touching_docs / len(commits), 4) if commits else None,
             "most_changed_files": [
                 {"file": f, "commits": n, "last_change_date": last_change[f]}
-                for f, n in changes.most_common(TOP_N_DEFAULT)
+                for f, n in ranked
             ],
         },
         "limitations": (

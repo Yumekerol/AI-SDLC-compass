@@ -105,7 +105,7 @@ def _iter_source_files(repo_path: Path):
     excluded_dirs = set(settings.excluded_dirs)
     excluded_extensions = {ext.lower() for ext in settings.excluded_extensions}
 
-    for path in repo_path.rglob("*"):
+    for path in sorted(repo_path.rglob("*")):
         if not path.is_file():
             continue
 
@@ -140,7 +140,7 @@ def count_excluded_items(repo_path: Path) -> int:
 
     excluded_count = 0
 
-    for path in repo_path.rglob("*"):
+    for path in sorted(repo_path.rglob("*")):
         if not path.is_file():
             continue
 
@@ -328,8 +328,39 @@ TEST_FILENAME_RE = re.compile(
 TEST_CLASS_SUFFIX_RE = re.compile(r"^.*(Test|Tests|IT|ITCase|Spec)\.(java|kt|scala|cs|swift|php)$")
 
 
+
+TEST_CONFIG_FILE_RE = re.compile(
+    r"^(jest|vitest|karma|cypress|playwright|wdio)([.-][a-z0-9]+)*\.(js|cjs|mjs|ts|cts|mts|json)$",
+    re.IGNORECASE,
+)
+TEST_CONFIG_FRAMEWORK = {
+    "jest": "Jest", "vitest": "Vitest", "karma": "Karma",
+    "cypress": "Cypress", "playwright": "Playwright", "wdio": "WebdriverIO",
+}
+
+TEST_SUPPORT_DIRS = {"support", "fixtures", "fixture", "helpers", "mocks", "__mocks__", "__fixtures__"}
+
+def _is_test_support_file(relative: str) -> bool:
+    parts = {p.lower() for p in PurePosixPath(relative).parts[:-1]}
+    return bool(parts & TEST_SUPPORT_DIRS)
+
+def _is_test_config_file(relative: str) -> bool:
+    name = PurePosixPath(relative).name
+    if re.search(r"\.(spec|test|cy)\.", name, re.IGNORECASE):
+        return False  # um spec nunca é config
+    return bool(TEST_CONFIG_FILE_RE.match(name))
+
 def _is_test_file(relative: str) -> bool:
+    if _is_test_config_file(relative):   # NOVO: config não é teste
+        return False
+    if _is_test_support_file(relative):
+        return False
     path = PurePosixPath(relative)
     if any(part.lower() in TEST_PATH_MARKERS for part in path.parts[:-1]):
         return True
     return bool(TEST_FILENAME_RE.match(path.name) or TEST_CLASS_SUFFIX_RE.match(path.name))
+
+
+def get_current_files(repo_path: Path) -> set[str]:
+    out = _run_git(repo_path, "ls-tree", "-r", "--name-only", "HEAD")
+    return set(out.splitlines())

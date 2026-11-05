@@ -32,6 +32,7 @@ from ..models.scanner_output import (
     ConfidenceLevel,
     LanguageBreakdown,
     LanguagesData,
+    MostLocFile,
     SizeAndStructureData,
     StackAndToolingData,
     CICDAndOperationsData,
@@ -154,7 +155,7 @@ def map_languages(metrics: Metrics) -> SignalGroup:
 # code_files            size_and_structure.code_files
 # total_files           size_and_structure.total_files
 # loc_estimate          size_and_structure.loc_estimate
-# module_estimate       size_and_structure.module_estimate
+# directory_estimate    size_and_structure.directory_estimate
 # avg_file_size_loc     size_and_structure.avg_file_size_loc  (None -> 0.0)
 # ---------------------------------------------------------------------------
 
@@ -165,15 +166,16 @@ def map_size_and_structure(metrics: Metrics) -> SignalGroup:
 
     data = SizeAndStructureData(
         code_files=raw.get("code_files", 0),
-        total_files=raw.get("total_files", 0),
+        total_analyzed_files=raw.get("total_analyzed_files", 0),
         loc_estimate=raw.get("loc_estimate", 0),
-        module_estimate=raw.get("module_estimate", 0),
+        directory_estimate=raw.get("directory_estimate", 0),
         avg_file_size_loc=raw.get("avg_file_size_loc") or 0.0,
+        most_loc_files=[MostLocFile(**file) for file in raw.get("most_loc_files", [])]
     )
 
     return SignalGroup(
         confidence=ConfidenceLevel.MEDIUM if data.code_files > 0 else ConfidenceLevel.LOW,
-        confidence_source="File counts after Settings filters; LOC and modules are heuristics",
+        confidence_source="File counts after Settings filters; LOC and directories are heuristics",
         data=data.model_dump(),
     )
 
@@ -547,6 +549,7 @@ def map_quality_indicators(metrics: Metrics) -> SignalGroup:
     data = QualityIndicatorsData(
         test_to_code_file_ratio=tests.get("test_to_code_file_ratio"),
         test_file_count=tests.get("test_files_count", 0),
+        test_config_files_count=tests.get("test_config_files_count", 0),
         source_file_count=tests.get("code_files_non_test_count", 0),
         #executed_coverage=None,             # não medido
         #has_quality_gate=True if coverage_tools else False,
@@ -554,7 +557,8 @@ def map_quality_indicators(metrics: Metrics) -> SignalGroup:
         coverage_tools=sorted(coverage_tools),
         has_code_style_config=bool(style_tools),
         code_style_tools=sorted(style_tools),
-        test_files_by_type=dict(test_files_by_type)
+        test_files_by_type=dict(test_files_by_type),
+        test_files=tests.get("test_files", [])  # file -> type
     )
 
     has_code = bool(tests.get("code_files_non_test_count"))
@@ -731,6 +735,7 @@ MAX_EVIDENCE_RETURNED = 100      # o coletor guarda até 200; para a UI chegam o
 def _commit_evidence(items: list[dict[str, Any]]) -> list[CommitEvidence]:
     return [
         CommitEvidence(
+            sha=item.get("sha"),
             date=item["date"],
             message=item["message"],
             matched_term=item.get("matched_term"),
@@ -781,7 +786,7 @@ def map_fixes_and_reverts(metrics: Metrics) -> SignalGroup:
     is_shallow = repo.get("is_shallow_clone")
     commits = data.commits_analyzed
 
-    confidence = ConfidenceLevel.HIGH if data.commits_analyzed > MEDIUM_COMMITS_FOR_HISTORY else ConfidenceLevel.MEDIUM if data.commits_analyzed > MIN_COMMITS_FOR_HISTORY else ConfidenceLevel.LOW
+    confidence = ConfidenceLevel.HIGH if data.commits_analyzed > MEDIUM_COMMITS_FOR_HISTORY and not is_trunc and not is_shallow else ConfidenceLevel.MEDIUM if data.commits_analyzed > MIN_COMMITS_FOR_HISTORY else ConfidenceLevel.LOW
 
     return SignalGroup(
         confidence=confidence,
@@ -915,7 +920,7 @@ def map_scope(metrics: Metrics) -> ScopeAssessment:
 
     return ScopeAssessment(
         eligible_for_poc=supported > 0,
-        supported_code_files=supported,
+        #supported_code_files=supported,
         excluded_items=excluded_items,
         exclusion_rules=settings.excluded_extensions + settings.excluded_dirs,
         scope_warnings=warnings,
