@@ -65,6 +65,8 @@ export function adaptBackendSignalsToRepoSignals(raw: BackendSignalsResponse): R
       'Dependency manifests and build descriptors'
   }
 
+  console.log(groups.cicd_and_operations)
+
   // CI/CD & operations
   const cicd = {
     ciProvider: cicdData?.cicd_tool || 'None detected',
@@ -80,7 +82,7 @@ export function adaptBackendSignalsToRepoSignals(raw: BackendSignalsResponse): R
       ? cicdData.documentation_notes || 'Documentation present'
       : 'No architecture document found',
     sampleEvidence:
-      groups.cicd_and_operations?.evidence_paths?.slice(0, 3).join(' · ') ||
+      groups.cicd_and_operations?.evidence_paths?.ci_config_files?.slice(0, 3).join(' · ') ||
       'Workflow files and repository configs'
   }
 

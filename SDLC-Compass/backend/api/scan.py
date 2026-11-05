@@ -188,7 +188,8 @@ async def get_signals(session_id: str):
         )
 
     out = session.scanner_output
-    return {
+    
+    result = {
         "session_id": session.id,
         "repository": out.get("repository", {}),
         "scope": out.get("scope", {}),
@@ -201,6 +202,13 @@ async def get_signals(session_id: str):
             "warnings_and_gaps": out.get("warnings_and_gaps", {}),
         },
     }
+
+    #logger.info(f"Result: {result["signal_groups"]["cicd_and_operations"]}")
+
+    return result
+    """ return {
+        "test": ":3"
+    } """
 
 
 class PatchSignalsRequest(BaseModel):

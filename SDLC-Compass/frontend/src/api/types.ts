@@ -123,7 +123,11 @@ export interface BackendQualityGroup {
     has_code_style_config?: boolean
     code_style_tools?: string[]
   }
-  evidence_paths?: string[]
+  evidence_paths?: {
+    ci_config_files?: string[]
+    container_files?: string[]
+    deploy_steps?: string[]
+  }
   user_edited?: boolean
 }
 
