@@ -256,6 +256,16 @@ class Supervisor:
 
             session.report = report
             session.report_generated_at = datetime.utcnow()
+            session.specialist_reports = reports
+            session.report_versions = [
+                {
+                    "version": 1,
+                    "created_at": report["generated_at"],
+                    "label": "Original report",
+                    "report": report,
+                }
+            ]
+            session.selected_report_version = 1
             session.status = SessionStatus.REPORT_READY
 
             sup_msg = ConversationMessage(

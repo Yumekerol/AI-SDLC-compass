@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from ..report.generator import generate_html_report, save_report_files
 from ..storage import get_storage
+from .advisor import ensure_report_versions, version_summaries
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sessions", tags=["Reports"])
@@ -40,6 +41,34 @@ async def get_report_json(session_id: str):
         )
 
     return session.report
+
+
+@router.get("/{session_id}/report/versions")
+async def list_report_versions(session_id: str):
+    """Every version of the report (the original plus each approved Synth
+    change) and which one is selected."""
+    store = await get_storage()
+    session = await store.get_session(session_id)
+    if not session or not session.report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return {"session_id": session.id, **version_summaries(session)}
+
+
+@router.post("/{session_id}/report/versions/{version}/select")
+async def select_report_version(session_id: str, version: int):
+    """Make `version` the report the page and the PDF export show."""
+    store = await get_storage()
+    session = await store.get_session(session_id)
+    if not session or not session.report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    ensure_report_versions(session)
+    match = next((v for v in session.report_versions if v["version"] == version), None)
+    if not match:
+        raise HTTPException(status_code=404, detail=f"Report version {version} not found")
+    session.report = match["report"]
+    session.selected_report_version = version
+    await store.update_session(session)
+    return {"session_id": session.id, "report": session.report, **version_summaries(session)}
 
 
 @router.get("/{session_id}/report/html", response_class=HTMLResponse)

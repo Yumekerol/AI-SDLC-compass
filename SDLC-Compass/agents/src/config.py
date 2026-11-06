@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     itself and generates until the context is full: one call took 4+ min."""
     synthesis_num_predict: int = 6000
     """The synthesizer returns the whole report as JSON, so it needs more."""
+    synthesis_chat_num_predict: int = 1000
+    """A Synth chat reply: a short answer plus whether a report change was
+    asked for. The revised report itself uses synthesis_num_predict."""
     require_question: bool = True
     """Send a specialist that finishes without asking the team anything back
     once to ask a question (see runner._nudge_if_silent)."""

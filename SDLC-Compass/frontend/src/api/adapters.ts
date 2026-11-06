@@ -65,8 +65,6 @@ export function adaptBackendSignalsToRepoSignals(raw: BackendSignalsResponse): R
       'Dependency manifests and build descriptors'
   }
 
-  console.log(groups.cicd_and_operations)
-
   // CI/CD & operations
   const cicd = {
     ciProvider: cicdData?.cicd_tool || 'None detected',

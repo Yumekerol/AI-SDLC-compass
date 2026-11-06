@@ -65,6 +65,9 @@ class SQLiteStore(BaseStore):
                     error_message TEXT,
                     advisor_messages TEXT,
                     notifications TEXT,
+                    report_versions TEXT,
+                    selected_report_version INTEGER,
+                    specialist_reports TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -76,6 +79,9 @@ class SQLiteStore(BaseStore):
                 "ALTER TABLE sessions ADD COLUMN processing INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE sessions ADD COLUMN advisor_messages TEXT",
                 "ALTER TABLE sessions ADD COLUMN notifications TEXT",
+                "ALTER TABLE sessions ADD COLUMN report_versions TEXT",
+                "ALTER TABLE sessions ADD COLUMN selected_report_version INTEGER",
+                "ALTER TABLE sessions ADD COLUMN specialist_reports TEXT",
             ):
                 try:
                     cursor.execute(migration)
@@ -110,8 +116,9 @@ class SQLiteStore(BaseStore):
                     workspace_path, scan_id, scanner_output, signals_confirmed, signals_confirmed_at,
                     processing, conversation, agent_statuses, knowledge_gaps, report,
                     report_generated_at, pdf_path, error_message, advisor_messages, notifications,
+                    report_versions, selected_report_version, specialist_reports,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.id,
                 session.status.value if hasattr(session.status, "value") else str(session.status),
@@ -134,6 +141,9 @@ class SQLiteStore(BaseStore):
                 session.error_message,
                 json.dumps(session.advisor_messages, default=str),
                 json.dumps(session.notifications, default=str),
+                json.dumps(session.report_versions, default=str),
+                session.selected_report_version,
+                json.dumps(session.specialist_reports, default=str),
                 session.created_at.isoformat(),
                 session.updated_at.isoformat(),
             ))
@@ -173,6 +183,9 @@ class SQLiteStore(BaseStore):
                 error_message=row["error_message"],
                 advisor_messages=json.loads(row["advisor_messages"]) if row["advisor_messages"] else [],
                 notifications=json.loads(row["notifications"]) if row["notifications"] else [],
+                report_versions=json.loads(row["report_versions"]) if row["report_versions"] else [],
+                selected_report_version=row["selected_report_version"],
+                specialist_reports=json.loads(row["specialist_reports"]) if row["specialist_reports"] else [],
                 created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
             )

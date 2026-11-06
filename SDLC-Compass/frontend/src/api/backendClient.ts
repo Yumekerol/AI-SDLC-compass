@@ -13,7 +13,8 @@ import type {
   BackendKnowledgeGapsResponse,
   BackendAdvisorMessagesResponse,
   BackendContinueDiagnosticResponse,
-  BackendSynthesisOutput
+  BackendSynthesisOutput,
+  BackendReportVersions
 } from './types'
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api/v1'
@@ -304,6 +305,42 @@ export async function sendAdvisorMessage(
     method: 'POST',
     body: JSON.stringify({ content })
   })
+}
+
+/**
+ * Step 4: Approve a report change Synth drafted. It becomes a new report
+ * version and is selected, so the page and the PDF export show it.
+ */
+export async function approveReportProposal(
+  sessionId: string,
+  proposalId: string
+): Promise<BackendAdvisorMessagesResponse> {
+  return request<BackendAdvisorMessagesResponse>(
+    `/sessions/${sessionId}/advisor/proposals/${proposalId}/approve`,
+    { method: 'POST' }
+  )
+}
+
+/**
+ * Step 4: Discard a report change Synth drafted.
+ */
+export async function discardReportProposal(sessionId: string, proposalId: string): Promise<unknown> {
+  return request<unknown>(`/sessions/${sessionId}/advisor/proposals/${proposalId}/discard`, {
+    method: 'POST'
+  })
+}
+
+/**
+ * Step 4: Make an earlier (or later) report version the selected one.
+ */
+export async function selectReportVersion(
+  sessionId: string,
+  version: number
+): Promise<BackendReportVersions & { report: BackendSynthesisOutput }> {
+  return request<BackendReportVersions & { report: BackendSynthesisOutput }>(
+    `/sessions/${sessionId}/report/versions/${version}/select`,
+    { method: 'POST' }
+  )
 }
 
 /**

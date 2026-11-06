@@ -52,6 +52,11 @@ class ConversationMessage(BaseModel):
     agent_label: str | None = None  # e.g., "Requirements & Design"
     content: str = ""
     questions: list[ConversationQuestion] = Field(default_factory=list)
+    proposal: dict | None = None
+    """Step 4 only: a report change Synth drafted from this message. Keys:
+    id, title, reason, status ("drafting" | "pending" | "approved" |
+    "discarded" | "failed"), error, version (once approved), and
+    revised_report (server-side only; stripped before it reaches the UI)."""
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -143,9 +148,18 @@ class DiagnosticSession(BaseModel):
     knowledge_gaps: dict | None = None  # Per-agent unresolved gaps
 
     # Step 4: Report
-    report: dict | None = None  # Serialized report JSON
+    report: dict | None = None  # Serialized report JSON — the selected version
     report_generated_at: datetime | None = None
     pdf_path: str | None = None
+    report_versions: list[dict] = Field(default_factory=list)
+    """Every version of the report: {version, created_at, label, report}.
+    Version 1 is what the pipeline produced; each approved Synth change adds
+    one. `report` above is whichever version is selected, which is what the
+    page and the PDF export show."""
+    selected_report_version: int | None = None
+    specialist_reports: list[dict] = Field(default_factory=list)
+    """The specialists' compact Reports from the pipeline, kept so Synth can
+    ground its chat answers and report changes in the original findings."""
 
     # Step 5: Advisor/support chat — stays available after the report is
     # ready. Separate from `conversation` (the Step-3 diagnostic interview,

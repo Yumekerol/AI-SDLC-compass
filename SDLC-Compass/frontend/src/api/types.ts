@@ -106,7 +106,14 @@ export interface BackendCicdGroup {
     has_iac?: boolean
     iac_tools?: string[]
   }
-  evidence_paths?: string[]
+  // Grouped by kind; the scanner leaves out empty kinds.
+  evidence_paths?: {
+    ci_config_files?: string[]
+    container_files?: string[]
+    iac_files?: string[]
+    test_steps?: string[]
+    deploy_steps?: string[]
+  }
   user_edited?: boolean
 }
 
@@ -123,11 +130,7 @@ export interface BackendQualityGroup {
     has_code_style_config?: boolean
     code_style_tools?: string[]
   }
-  evidence_paths?: {
-    ci_config_files?: string[]
-    container_files?: string[]
-    deploy_steps?: string[]
-  }
+  evidence_paths?: string[]
   user_edited?: boolean
 }
 
@@ -195,7 +198,29 @@ export interface BackendConversationMessage {
   agent_label?: string | null
   content: string
   questions?: BackendDiagnosticQuestion[]
+  // Step 4 only: a report change Synth drafted from this message.
+  proposal?: BackendReportProposal | null
   timestamp: string
+}
+
+export interface BackendReportProposal {
+  id: string
+  title: string
+  reason: string
+  status: 'drafting' | 'pending' | 'approved' | 'discarded' | 'failed'
+  error?: string | null
+  version?: number | null
+}
+
+export interface BackendReportVersionSummary {
+  version: number
+  created_at?: string | null
+  label: string
+}
+
+export interface BackendReportVersions {
+  selected_version: number | null
+  versions: BackendReportVersionSummary[]
 }
 
 export interface BackendDiagnoseResponse {
@@ -247,7 +272,7 @@ export interface BackendKnowledgeGapsResponse {
   gaps: Record<string, string[]>
 }
 
-export interface BackendAdvisorMessagesResponse {
+export interface BackendAdvisorMessagesResponse extends Partial<BackendReportVersions> {
   session_id: string
   messages: BackendConversationMessage[]
 }

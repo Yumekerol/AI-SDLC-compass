@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from .acquisition import ensure_repo
 from .agent import agent_service
 from .config import settings
-from . import pipeline, pipeline_store
+from . import pipeline, pipeline_store, synthesizer
 from .persistence import init_checkpointer, close_checkpointer
 
 logging.basicConfig(
@@ -102,6 +102,40 @@ async def chat_with_agent(req: ChatRequest):
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("answer"))
     return ChatResponse(**result)
+
+
+class SynthChatRequest(BaseModel):
+    report: dict[str, Any]
+    message: str
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    specialist_reports: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SynthReviseRequest(BaseModel):
+    report: dict[str, Any]
+    instruction: str
+    specialist_reports: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@app.post("/synthesis/chat", tags=["Synthesizer"])
+async def synthesis_chat(req: SynthChatRequest):
+    """Talk to Synth about a finished report. Returns its answer and whether
+    the message asked for a change to the report (drafted by /synthesis/revise)."""
+    try:
+        return await synthesizer.chat(req.report, req.message, req.history, req.specialist_reports)
+    except Exception as e:
+        logger.exception("Synth chat failed")
+        raise HTTPException(status_code=500, detail=f"Synth chat failed: {type(e).__name__}: {e}")
+
+
+@app.post("/synthesis/revise", tags=["Synthesizer"])
+async def synthesis_revise(req: SynthReviseRequest):
+    """Return the report with the requested change applied."""
+    try:
+        return {"report": await synthesizer.revise(req.report, req.instruction, req.specialist_reports)}
+    except Exception as e:
+        logger.exception("Synth revise failed")
+        raise HTTPException(status_code=500, detail=f"Synth revise failed: {type(e).__name__}: {e}")
 
 
 class PipelineStartRequest(BaseModel):

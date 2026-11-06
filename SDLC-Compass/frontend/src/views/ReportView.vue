@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import * as api from '@/api'
 import type { DiagnosticReport, RecommendationPriority } from '@/types/diagnostic'
-import type { BackendConversationMessage } from '@/api/types'
+import type { BackendConversationMessage, BackendReportVersionSummary } from '@/api/types'
 import { mockDiagnosticReport } from '@/mocks'
 
 const router = useRouter()
@@ -21,9 +21,12 @@ const messagesContainer = ref<HTMLElement | null>(null)
 
 // Advisory message types for Step 4
 interface ProposedChange {
+  id?: string
   title: string
   reason: string
-  status: 'pending' | 'approved'
+  status: 'drafting' | 'pending' | 'approved' | 'discarded' | 'failed'
+  error?: string | null
+  version?: number | null
 }
 
 interface DisplayChatMessage {
@@ -149,13 +152,125 @@ function toDisplayMessage(m: BackendConversationMessage): DisplayChatMessage {
     return { id: m.id, senderType: 'user', senderName: 'You', avatarInitial: 'You', text: m.content, timestamp: formatTime(m.timestamp) }
   }
   const name = m.agent_label || 'Advisor'
+  const isSynth = name === 'Synthesizer'
   return {
     id: m.id,
-    senderType: 'specialist',
+    senderType: isSynth ? 'synthesizer' : 'specialist',
     senderName: name,
-    avatarInitial: name.charAt(0).toUpperCase(),
+    avatarInitial: isSynth ? 'Y' : name.charAt(0).toUpperCase(),
+    roleBadge: isSynth ? (m.proposal ? 'Proposed change' : 'Reply') : undefined,
     text: m.content,
-    timestamp: formatTime(m.timestamp)
+    timestamp: formatTime(m.timestamp),
+    proposal: m.proposal ?? undefined
+  }
+}
+
+// ─── Synth: drafted report changes and report versions ───────────────
+const chatError = ref<string>('')
+const proposalBusyId = ref<string | null>(null)
+const reportVersions = ref<BackendReportVersionSummary[]>([])
+const selectedVersion = ref<number | null>(null)
+const isSwitchingVersion = ref<boolean>(false)
+let draftPollTimer: ReturnType<typeof setTimeout> | null = null
+const DRAFT_POLL_MS = 5000
+
+const isDrafting = computed(() => chatMessages.value.some((m) => m.proposal?.status === 'drafting'))
+
+function applyVersions(res: { selected_version?: number | null; versions?: BackendReportVersionSummary[] }) {
+  if (res.versions) reportVersions.value = res.versions
+  if (res.selected_version !== undefined) selectedVersion.value = res.selected_version
+}
+
+async function refreshChat() {
+  if (!store.sessionId) return
+  const history = await api.backendClient.getAdvisorMessages(store.sessionId)
+  chatMessages.value = history.messages.map(toDisplayMessage)
+  applyVersions(history)
+  scheduleDraftPoll()
+}
+
+// While Synth drafts a change in the background, poll until it is ready.
+function scheduleDraftPoll() {
+  if (draftPollTimer) clearTimeout(draftPollTimer)
+  draftPollTimer = null
+  if (!isDrafting.value || api.USE_MOCKS) return
+  draftPollTimer = setTimeout(async () => {
+    try {
+      await refreshChat()
+      scrollToBottom()
+    } catch (err) {
+      console.warn('Could not refresh Synth chat:', err)
+      scheduleDraftPoll()
+    }
+  }, DRAFT_POLL_MS)
+}
+
+onBeforeUnmount(() => {
+  if (draftPollTimer) clearTimeout(draftPollTimer)
+})
+
+async function reloadReport() {
+  if (!store.sessionId) return
+  store.diagnostic = await api.getExistingDiagnostic(store.sessionId)
+}
+
+async function handleApproveProposal(proposalId?: string) {
+  if (!proposalId || !store.sessionId || proposalBusyId.value) return
+  proposalBusyId.value = proposalId
+  chatError.value = ''
+  try {
+    await api.backendClient.approveReportProposal(store.sessionId, proposalId)
+    await reloadReport()
+    await refreshChat()
+    scrollToBottom()
+  } catch (err: unknown) {
+    chatError.value = (err as { message?: string }).message || 'Could not apply the change.'
+  } finally {
+    proposalBusyId.value = null
+  }
+}
+
+async function handleDiscardProposal(proposalId?: string) {
+  if (!proposalId || !store.sessionId || proposalBusyId.value) return
+  proposalBusyId.value = proposalId
+  chatError.value = ''
+  try {
+    await api.backendClient.discardReportProposal(store.sessionId, proposalId)
+    await refreshChat()
+  } catch (err: unknown) {
+    chatError.value = (err as { message?: string }).message || 'Could not discard the change.'
+  } finally {
+    proposalBusyId.value = null
+  }
+}
+
+async function handleSelectVersion(event: Event) {
+  const version = Number((event.target as HTMLSelectElement).value)
+  if (!store.sessionId || !version || version === selectedVersion.value) return
+  isSwitchingVersion.value = true
+  try {
+    const res = await api.backendClient.selectReportVersion(store.sessionId, version)
+    applyVersions(res)
+    await reloadReport()
+  } catch (err: unknown) {
+    exportNotice.value = (err as { message?: string }).message || 'Could not switch report version.'
+  } finally {
+    isSwitchingVersion.value = false
+  }
+}
+
+function proposalBadge(status: ProposedChange['status']): { text: string; cls: string } {
+  switch (status) {
+    case 'drafting':
+      return { text: 'Drafting…', cls: 'badge-info' }
+    case 'pending':
+      return { text: 'Pending approval', cls: 'badge-warning' }
+    case 'approved':
+      return { text: 'Applied', cls: 'badge-success' }
+    case 'discarded':
+      return { text: 'Discarded', cls: 'badge-poc' }
+    default:
+      return { text: 'Failed', cls: 'badge-poc' }
   }
 }
 
@@ -170,10 +285,11 @@ function scrollToBottom() {
 // Composer & Send logic
 async function handleSendMessage() {
   const content = composerInput.value.trim()
-  if (!content || isSending.value) return
+  if (!content || isSending.value || isDrafting.value) return
 
   composerInput.value = ''
   isSending.value = true
+  chatError.value = ''
 
   const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -193,6 +309,7 @@ async function handleSendMessage() {
       const res = await api.backendClient.sendAdvisorMessage(store.sessionId, content)
       const reply = res.messages.find((m) => m.role !== 'user')
       if (reply) chatMessages.value.push(toDisplayMessage(reply))
+      scheduleDraftPoll()
     } else {
       const reply = await api.sendAdvisorMessage(content)
       chatMessages.value.push({
@@ -206,8 +323,9 @@ async function handleSendMessage() {
       })
     }
     scrollToBottom()
-  } catch (err) {
+  } catch (err: unknown) {
     console.warn('Failed to send advisory message:', err)
+    chatError.value = (err as { message?: string }).message || 'Synth did not reply. Please retry.'
   } finally {
     isSending.value = false
   }
@@ -248,8 +366,7 @@ onMounted(async () => {
     }
   }
   try {
-    const history = await api.backendClient.getAdvisorMessages(store.sessionId)
-    chatMessages.value = history.messages.map(toDisplayMessage)
+    await refreshChat()
   } catch (err) {
     console.warn('Could not load advisory chat history:', err)
   }
@@ -453,7 +570,7 @@ function goBackToQuestions() {
         <div class="chat-card-header">
           <div>
             <h2 class="chat-title">Advisory chat</h2>
-            <p class="chat-subtitle">Ask follow-up questions about the report or challenge a recommendation.</p>
+            <p class="chat-subtitle">Ask Synth about the report, challenge a recommendation or ask for a change. You approve each change before it reaches the report.</p>
           </div>
         </div>
 
@@ -466,17 +583,8 @@ function goBackToQuestions() {
           <div class="messages-inner-anchor">
             <p v-if="!chatMessages.length" class="empty-chat-note">No messages yet. Ask the advisor about any part of the report.</p>
             <template v-for="msg in chatMessages" :key="msg.id">
-              <!-- Case A: Proposed Change Card -->
-              <div v-if="msg.senderType === 'proposal' && msg.proposal" class="proposal-card-block">
-                <div class="proposal-card-header">
-                  <span class="proposal-label">Proposed change</span>
-                  <span class="badge badge-warning">Pending approval</span>
-                </div>
-                <h4 class="proposal-title">{{ msg.proposal.title }}</h4>
-                <p class="proposal-reason">
-                  <strong>Reason:</strong> {{ msg.proposal.reason }}
-                </p>
-              </div>
+              <!-- Case A: a bare proposal (sample data only); its card is rendered below -->
+              <template v-if="msg.senderType === 'proposal'"></template>
 
               <!-- Case B: Synthesizer Report Note -->
               <div v-else-if="msg.senderType === 'synthesizer'" class="message-row message-synthesizer">
@@ -525,6 +633,47 @@ function goBackToQuestions() {
                   </div>
                 </div>
               </div>
+
+              <!-- Proposed change card: a report change Synth drafted -->
+              <div v-if="msg.proposal" class="proposal-card-block">
+                <div class="proposal-card-header">
+                  <span class="proposal-label">Proposed change</span>
+                  <span class="badge" :class="proposalBadge(msg.proposal.status).cls">
+                    {{ proposalBadge(msg.proposal.status).text }}
+                  </span>
+                </div>
+                <h4 class="proposal-title">{{ msg.proposal.title }}</h4>
+                <p v-if="msg.proposal.reason" class="proposal-reason">
+                  <strong>Reason:</strong> {{ msg.proposal.reason }}
+                </p>
+                <p v-if="msg.proposal.status === 'drafting'" class="proposal-reason">
+                  Synth is rewriting the report with this change. This can take a few minutes.
+                </p>
+                <p v-else-if="msg.proposal.status === 'failed'" class="proposal-reason">
+                  {{ msg.proposal.error || 'Synth could not draft this change.' }}
+                </p>
+                <p v-else-if="msg.proposal.status === 'approved' && msg.proposal.version" class="proposal-reason">
+                  Applied as report version {{ msg.proposal.version }}.
+                </p>
+                <div v-if="msg.proposal.status === 'pending' && !isMock" class="proposal-actions">
+                  <button
+                    type="button"
+                    class="btn-primary proposal-btn"
+                    :disabled="proposalBusyId !== null"
+                    @click="handleApproveProposal(msg.proposal.id)"
+                  >
+                    {{ proposalBusyId === msg.proposal.id ? 'Applying…' : 'Approve' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-secondary proposal-btn"
+                    :disabled="proposalBusyId !== null"
+                    @click="handleDiscardProposal(msg.proposal.id)"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
             </template>
           </div>
         </div>
@@ -548,12 +697,17 @@ function goBackToQuestions() {
             <button
               type="button"
               class="btn-primary composer-send-btn"
-              :disabled="isSending || !composerInput.trim()"
+              :disabled="isSending || isDrafting || !composerInput.trim()"
               @click="handleSendMessage"
             >
-              Send
+              {{ isSending ? 'Waiting…' : 'Send' }}
             </button>
           </div>
+
+          <p v-if="chatError" class="chat-error-note" role="alert">{{ chatError }}</p>
+          <p v-else-if="isDrafting" class="footnote-text">
+            Synth is drafting a report change. You can send your next message once it is ready.
+          </p>
 
           <div class="composer-helper-row">
             <span class="footnote-text">
@@ -871,6 +1025,20 @@ function goBackToQuestions() {
         <span class="footer-guidance-note">
           Use the diagnostic to guide a team discussion, not replace delivery judgement.
         </span>
+
+        <label v-if="reportVersions.length > 1" class="version-picker">
+          <span class="version-picker-label">Report version</span>
+          <select
+            class="version-select"
+            :value="selectedVersion ?? undefined"
+            :disabled="isSwitchingVersion || isExporting"
+            @change="handleSelectVersion"
+          >
+            <option v-for="v in reportVersions" :key="v.version" :value="v.version">
+              v{{ v.version }} · {{ v.label }}
+            </option>
+          </select>
+        </label>
 
         <button
           type="button"
@@ -1246,6 +1414,43 @@ function goBackToQuestions() {
   font-size: 0.8125rem;
   color: #92400e;
   line-height: 1.4;
+}
+
+.proposal-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.proposal-btn {
+  padding: 0.375rem 0.875rem;
+  font-size: 0.8125rem;
+}
+
+.chat-error-note {
+  font-size: 0.8125rem;
+  color: #b91c1c;
+}
+
+.version-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.version-picker-label {
+  color: var(--color-text-secondary, #475569);
+  white-space: nowrap;
+}
+
+.version-select {
+  max-width: 16rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--color-border, #cbd5e1);
+  border-radius: var(--radius-md);
+  background: var(--color-surface, #fff);
+  font-size: 0.8125rem;
 }
 
 /* Composer Section */
